@@ -1,4 +1,0 @@
-/* Workaround for https://github.com/readthedocs/sphinx_rtd_theme/issues/1247 */
-dl.py.property {
-    display: block !important;
-}

@@ -1,1 +1,0 @@
-from .overwatch import OverwatchRich

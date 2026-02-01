@@ -1,1 +1,0 @@
-from .ego4d_hoi_dataset import Ego4DPretrainDataset
