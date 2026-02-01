@@ -1,0 +1,7 @@
+num_demos: 25                   # path to demo file auto-inferred from other inputs
+camera_name: top_cap2           # choice of camera to use for image generation
+image_width: 256
+image_height: 256
+action_dim: 4
+history_window: 3               
+data_dir: /root/data/vc-1/metaworld-expert-v1.0

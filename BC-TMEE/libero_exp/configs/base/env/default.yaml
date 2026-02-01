@@ -1,0 +1,9 @@
+env_type: libero
+benchmark_envs: ${data.benchmark_envs}
+env_name: ${data.env_name}
+task_id: [2]              # goal: 2, spatial: ?, object: ?, 10: ?, 90: ?
+env_num: 50               # eval: 20, train: 10
+num_env_rollouts: 1      # eval: 20, train: 10
+horizon: 300              # rollout step of train
+max_steps: 600            # rollout step of inference
+render_gpu_ids: ${train.train_gpus}

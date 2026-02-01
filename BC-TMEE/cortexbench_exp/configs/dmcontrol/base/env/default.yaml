@@ -1,0 +1,18 @@
+env_type: cortexbench
+env_name: dmcontrol
+suite: dmc
+task_name: dmc_cheetah_run-v1     # name of task of environment (e.g. dmc_cheetah_run-v1, dmc_finger_spin-v1, dmc_reacher_easy-v1, dmc_walker_walk-v1, dmc_walker_walk-v1)
+
+device: ${train.device}        
+image_width: ${data.image_width} 
+image_height: ${data.image_height} 
+camera_name: ${data.camera_name}
+embedding: ${policy.embedding}
+pixel_based: True
+render_gpu_id: 0
+seed: ${train.seed}
+history_window: ${data.history_window}
+horizon: 500
+add_proprio: False
+proprio_key: None
+proprio_dim: 0

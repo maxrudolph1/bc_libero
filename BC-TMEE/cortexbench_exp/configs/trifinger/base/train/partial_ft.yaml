@@ -1,0 +1,24 @@
+defaults:
+    - optimizer@optimizer: adam.yaml
+    - scheduler@scheduler: cosine_annealing.yaml
+
+ft_method: partial_ft
+device: cuda
+train_gpus: [0]
+mix_precision: False
+
+seed: 0                         # global seed for the experiment
+epochs: 400                     # number of outer epochs
+lr: 1e-4
+batch_size: 512
+print_frequency: 5
+save_frequency: 40               # frequency of epochs for saving policies
+grad_clip: 100.
+mi_loss_scale: 0.005
+mine_mi_loss_scale: 0.1
+
+# resume
+resume: False
+resume_path: ""
+
+

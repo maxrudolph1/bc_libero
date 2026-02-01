@@ -1,0 +1,18 @@
+env_type: cortexbench
+env_name: adroit
+suite: adroit
+task_name: pen-v0    # name of task of environment (e.g. pen-v0, relocate-v0)
+
+device: ${train.device}        
+image_width: ${data.image_width} 
+image_height: ${data.image_height} 
+camera_name: ${data.camera_name}
+embedding: ${policy.embedding}
+pixel_based: True
+render_gpu_id: 0
+seed: ${train.seed}
+history_window: ${data.history_window}
+horizon: 500
+add_proprio: True
+proprio_key: proprio
+proprio_dim: 24

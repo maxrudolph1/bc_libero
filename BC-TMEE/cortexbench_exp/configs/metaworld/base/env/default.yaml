@@ -1,0 +1,18 @@
+env_type: cortexbench
+env_name: metaworld
+suite: metaworld
+task_name: assembly-v2-goal-observable     # name of task of environment (e.g. assembly-v2-goal-observable, bin-picking-v2-goal-observable, button-press-topdown-v2-goal-observable, drawer-open-v2-goal-observable, hammer-v2-goal-observable)
+
+device: ${train.device}        
+image_width: ${data.image_width} 
+image_height: ${data.image_height} 
+camera_name: ${data.camera_name} 
+embedding: ${policy.embedding}
+pixel_based: True
+render_gpu_id: 0
+seed: ${train.seed}
+history_window: ${data.history_window}
+horizon: 500
+add_proprio: True
+proprio_key: gripper_proprio
+proprio_dim: 4

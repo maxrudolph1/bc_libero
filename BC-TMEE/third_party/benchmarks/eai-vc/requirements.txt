@@ -1,0 +1,57 @@
+#  conda install -c conda-forge libglib=2.76.1 glib==2.76.1 glib-tools==2.76.1 habitat-sim==0.2.1
+#  conda install -c aihabitat habitat-sim==0.2.1
+
+eigenpy==2.9.2
+black
+click
+cloudpickle
+cffi
+cmake==3.22.1
+cython
+flake8
+glfw
+headless
+hydra-core
+ifcfg
+isort
+imageio
+ipdb
+ipython
+jupyter
+mamba
+mkl-service
+moviepy
+numpy==1.23.5
+opencv-python
+pandas
+patchelf
+pinocchio
+pillow
+protobuf>=3.20.1
+pybullet
+pytest
+pytest-xdist
+pyyaml
+scipy
+seaborn
+six
+submitit
+tabulate
+tensorboard
+termcolor
+transforms3d
+tqdm
+wandb>=0.13
+wheel
+yacs
+hydra-submitit-launcher
+dm-control>=1.0.5
+gym==0.21.0
+setuptools==59.5.0
+timm>=0.6.11
+git+https://github.com/openai/CLIP.git
+# functorch
+# torchrl
+classy_vision==0.6.0
+yt_dlp==2023.2.17
+numba==0.56.4

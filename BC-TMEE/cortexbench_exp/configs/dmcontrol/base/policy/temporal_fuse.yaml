@@ -1,0 +1,26 @@
+embedding_type: VC1
+embedding: vc1_vitb                     # choice of embedding network
+embedding_dim: 768
+embedding_dir: /root/model
+
+fuse_method: temporal_fuse
+use_spatial: False
+spatial_down_sample:
+    input_size: 64
+temporal_fuse:
+    input_size: ${policy.spatial_down_sample.input_size}
+    transformer_num_layers: 4
+    transformer_num_heads: 6
+    transformer_head_output_size: 64
+    transformer_mlp_hidden_size: 256
+    transformer_dropout: 0.1
+    transformer_max_seq_len: 10
+
+extra_states_encoder:
+    input_size: 0
+    output_size: 0
+    
+policy_head:
+    hidden_size: 512
+    output_size: ${data.action_dim}
+    num_layers: 2

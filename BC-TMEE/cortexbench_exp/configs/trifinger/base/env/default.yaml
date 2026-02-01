@@ -1,0 +1,17 @@
+env_type: cortexbench
+env_name: trifinger
+suite: trifinger
+task_name: move     # name of task of environment (e.g. move, reach)
+eval_envs: ["sim_env_demo"]
+
+device: ${train.device}        
+image_width: ${data.image_width} 
+image_height: ${data.image_height} 
+camera_name: ${data.camera_name} 
+pixel_based: True
+render_gpu_id: 0
+seed: ${train.seed}
+history_window: ${data.history_window}
+horizon: 500
+add_proprio: True
+proprio_dim: 4

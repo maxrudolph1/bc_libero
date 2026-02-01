@@ -1,0 +1,10 @@
+# rollout
+enable_rollout_train: False
+enable_rollout_eval: False
+eval_frequency: ${train.save_frequency}                 # frequency of epochs for evaluation and logging
+eval_num_traj: 25                # number of rollouts to eval
+num_cpu: 1                       # for rolling out paths when evaluating
+
+# eval
+load_path: ""                      # path of trained model used in inference
+eval_all: False                   # if false, evaluate final model
