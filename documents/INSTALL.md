@@ -68,7 +68,7 @@ git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git
 cd libero
 pip install -r requirements.txt
 cd ../LIBERO
-pip install -e.
+pip install -e .
 cd ../../..
 ```
 
