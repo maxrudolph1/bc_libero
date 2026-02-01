@@ -1,4 +1,4 @@
-# Dataset Downloading
+# Model Downloading
 
 ## 1. LIBERO Experiments
 In LIBERO experiments, there is a pre-trained language model: [bert-base-cased](https://huggingface.co/google-bert/bert-base-cased/tree/main). We recommend downloading it manually beforehand.

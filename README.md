@@ -53,7 +53,7 @@ Refer to [DOWNLOAD_DATASET.md](documents/DOWNLOAD_DATASET.md) for instructions o
 
 ## 💻 Baseline Preparation
 
-Refer to [DOWNLOAD_MODEL.md](documents/DOWNLOAD_MODEL.md) for instructions on downloading pre-trained models of basleines.
+Refer to [DOWNLOAD_MODEL.md](documents/DOWNLOAD_MODEL.md) for instructions on downloading pre-trained models of baselines.
 
 
 ## 📈 Usage
