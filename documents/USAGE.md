@@ -46,7 +46,7 @@ If using [eval_libero_all.sh](../libero_exp/scripts/eval_libero_all.sh), you nee
 
 ```bash
 #                        only evalute on final checkpoint
-bash libero_exp/scripts/eval_libero_all.sh' False
+bash libero_exp/scripts/eval_libero_all.sh False
 ```
 
 
