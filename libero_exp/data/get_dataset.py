@@ -8,8 +8,11 @@
     So that's why we currently use frame_stack instead of seq_len.
 """
 
+import random
+
 import numpy as np
-from torch.utils.data import Dataset
+from torch.utils.data import ConcatDataset, Dataset
+from torch.utils.data.dataloader import default_collate
 import robomimic.utils.file_utils as FileUtils
 import robomimic.utils.obs_utils as ObsUtils
 
@@ -146,3 +149,55 @@ class TruncatedSequenceDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.sequence_dataset.__getitem__(idx)
+
+
+class DualTaskBatchDataset(Dataset):
+    """
+    Pairs one sample from a fixed task with one sample drawn uniformly from all tasks.
+
+    Each __getitem__ returns {"focused": sample, "mixed": sample}. Use
+    collate_dual_task_batch in the DataLoader to obtain two batches per step:
+
+        data["focused"]  # batch from cfg.data.dual_task.focused_task_id
+        data["mixed"]    # batch with demos from every task (uniform over pooled data)
+    """
+
+    def __init__(self, task_datasets, focused_task_id=0):
+        if not task_datasets:
+            raise ValueError("task_datasets must be a non-empty list of per-task datasets")
+        if focused_task_id < 0 or focused_task_id >= len(task_datasets):
+            raise ValueError(
+                f"focused_task_id={focused_task_id} out of range for "
+                f"{len(task_datasets)} tasks"
+            )
+
+        self.task_datasets = task_datasets
+        self.focused_task_id = focused_task_id
+        self.focused_dataset = task_datasets[focused_task_id]
+        self.all_tasks_dataset = ConcatDataset(task_datasets)
+        self.n_tasks = len(task_datasets)
+        self._mixed_pool_size = len(self.all_tasks_dataset)
+
+    def __len__(self):
+        return len(self.focused_dataset)
+
+    def _sample_mixed_index(self):
+        return random.randrange(self._mixed_pool_size)
+
+    def __getitem__(self, idx):
+        focused_idx = idx % len(self.focused_dataset)
+        mixed_idx = self._sample_mixed_index()
+        return {
+            "focused": self.focused_dataset[focused_idx],
+            "mixed": self.all_tasks_dataset[mixed_idx],
+        }
+
+
+def collate_dual_task_batch(batch):
+    """Collate a list of dual-task samples into two batched dicts."""
+    focused_samples = [sample["focused"] for sample in batch]
+    mixed_samples = [sample["mixed"] for sample in batch]
+    return {
+        "focused": default_collate(focused_samples),
+        "mixed": default_collate(mixed_samples),
+    }

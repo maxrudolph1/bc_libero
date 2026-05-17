@@ -9,7 +9,7 @@ export PYOPENGL_PLATFORM=osmesa
 source .venv/bin/activate
 
 ENV_NAME=libero_spatial             # ["libero_spatial", "libero_object", "libero_goal", "libero_10"]
-POLICY_NAME=bc_policy          # ['bc_policy', 'bc_ib_policy']
+POLICY_NAME=bc_cardpol_policy          # ['bc_policy', 'bc_ib_policy']
 CONFIG_NAME=transformer          # backbone_name: ['mlp', 'rnn', 'transformer', 'vilt']
 TRAIN_RATIO=0.9          
 SEED=0
@@ -36,6 +36,9 @@ python train_libero.py \
     data.train_ratio=${TRAIN_RATIO} \
     train.mine_mi_loss_scale=${MINE} \
     train.mi_loss_scale=${MI} \
-    train.train_gpus=[0]
+    train.train_gpus=[0] \
+    train.rep_loss_scale=1.0 \
+    data.dual_task.enable=true \
+    data.dual_task.focused_task_id=0
     # env.horizon=10
 

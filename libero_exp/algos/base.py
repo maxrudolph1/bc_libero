@@ -15,7 +15,11 @@ from lightning.fabric import Fabric
 from libero.libero.benchmark import get_benchmark
 from libero.lifelong.datasets import SequenceVLDataset
 
-from ..data.get_dataset import get_dataset
+from ..data.get_dataset import (
+    DualTaskBatchDataset,
+    collate_dual_task_batch,
+    get_dataset,
+)
 from ..models import BCRNNPolicy, BCTransformerPolicy, BCViLTPolicy, BCMLPPolicy, BCDPPolicy
 from ..utils.data_utils import get_task_embs
 from ..utils.env_utils import build_env
@@ -159,12 +163,25 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
         benchmark.set_task_embs(task_embs)
 
         train_datasets = [SequenceVLDataset(ds, emb) for (ds, emb) in zip(train_manip_datasets, task_embs)]
-        train_concat_dataset = ConcatDataset(train_datasets)
+        if cfg.data.dual_task.enable:
+            train_dataset = DualTaskBatchDataset(
+                train_datasets,
+                focused_task_id=cfg.data.dual_task.focused_task_id,
+            )
+            train_collate_fn = collate_dual_task_batch
+            print(
+                f"Using DualTaskBatchDataset: focused_task_id="
+                f"{cfg.data.dual_task.focused_task_id} ({benchmark.get_task_names()[cfg.data.dual_task.focused_task_id]})"
+            )
+        else:
+            train_dataset = ConcatDataset(train_datasets)
+            train_collate_fn = None
         self.train_loader = DataLoader(
-            train_concat_dataset,
+            train_dataset,
             batch_size=cfg.train.batch_size,
             num_workers=cfg.train.num_workers,
-            sampler=RandomSampler(train_concat_dataset),
+            sampler=RandomSampler(train_dataset),
+            collate_fn=train_collate_fn,
             persistent_workers=True,
         )
 

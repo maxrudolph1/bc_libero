@@ -34,3 +34,8 @@ obs_key_mapping:
 embedding_model_path: "bert-base-cased" 
 task_embedding_format: "bert"       # language tokenizer
 max_word_len: 25
+
+# dual-task training batches (one focused task + one pooled over all tasks)
+dual_task:
+  enable: false
+  focused_task_id: 0                # benchmark task index for the "focused" batch
