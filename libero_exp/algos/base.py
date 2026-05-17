@@ -90,7 +90,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
         else:   # train
             shape_meta = self.build_dataloader(cfg)
             self.device = cfg.train.device
-            self.fabric = Fabric(accelerator="cuda", devices=list(cfg.train.train_gpus), precision="bf16-mixed" if cfg.train.mix_precision else None, strategy="deepspeed")
+            self.fabric = Fabric(accelerator="cuda", devices=list(cfg.train.train_gpus), precision="bf16-mixed" if cfg.train.mix_precision else None, strategy="ddp")
             self.fabric.launch()
             self.build_model(cfg, shape_meta)
 
@@ -193,6 +193,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
     def train(self):
         cfg = self.cfg
         self.before_train()
+        self.evaluate_before_train()
 
         print('\nTraining...')
         self.fabric.barrier()
@@ -207,16 +208,53 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
         cfg = self.cfg
         self.metric_logger = MetricLogger(delimiter=" ")
         self.best_loss_logger = BestAvgLoss(window_size=5)
-        None if (cfg.train.dry or not self.fabric.is_global_zero) else init_wandb(cfg)
+        if self._wandb_enabled():
+            init_wandb(cfg)
 
         self.losses = MetricMeter()
         self.batch_time = AverageMeter()
         self.data_time = AverageMeter()
+        self.global_step = 0
+
+    def _wandb_enabled(self):
+        cfg = self.cfg
+        return (
+            self.fabric.is_global_zero
+            and not cfg.train.dry
+            and cfg.wandb.use_wandb
+        )
+
+    def _log_wandb(self, metrics, step=None):
+        if not self._wandb_enabled() or wandb.run is None:
+            return
+        wandb.log(metrics, step=self.global_step if step is None else step)
+
+    def _train_batch_metrics(self):
+        metrics = {f"train/{k}": v.avg for k, v in self.losses.meters.items()}
+        metrics["train/lr"] = self.optimizer.param_groups[0]["lr"]
+        metrics["train/batch_time"] = self.batch_time.avg
+        metrics["train/data_time"] = self.data_time.avg
+        return metrics
+
+    def evaluate_before_train(self):
+        """Validation loss at epoch 0 (untrained weights). Skipped when resuming."""
+        cfg = self.cfg
+        if cfg.train.resume:
+            return
+
+        self.fabric.barrier()
+        if self.fabric.is_global_zero:
+            print("\nEvaluating untrained model (epoch 0)...")
+            init_metrics = self.evaluate(tag="init")
+            self.metric_logger.update(**init_metrics)
+            self._log_wandb(init_metrics, step=0)
+        self.fabric.barrier()
 
     def before_epoch(self):
         pass
 
     def run_epoch(self):
+        cfg = self.cfg
         tot_loss_dict, tot_items = {}, 0
 
         self.model.train()
@@ -234,7 +272,15 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
                 tot_loss_dict[k] += v
             tot_items += 1
 
-            if (batch_id + 1) % 100 == 0 or len(self.train_loader) < 100:
+            self.global_step += 1
+            print_freq = cfg.train.print_freq
+            log_freq = cfg.train.log_freq
+            should_print = (batch_id + 1) % print_freq == 0 or len(self.train_loader) < print_freq
+            should_wandb = log_freq > 0 and (batch_id + 1) % log_freq == 0
+            if should_print or should_wandb:
+                self._log_wandb(self._train_batch_metrics())
+
+            if should_print:
                     nb_remain = 0
                     nb_remain += len(self.train_loader) - batch_id - 1
                     nb_remain += (self.cfg.train.n_epochs - self.epoch) * len(self.train_loader)
@@ -270,7 +316,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
             self.scheduler.step()
 
         return out_dict
-    
+
     def forward_backward(self, data):
         loss = self.compute_loss(data)
 
@@ -296,7 +342,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
         self.metric_logger.update(**train_metrics)
 
         if self.fabric.is_global_zero:
-            None if cfg.train.dry else wandb.log(train_metrics, step=self.epoch)
+            self._log_wandb(train_metrics)
 
             if self.epoch == 1 or self.epoch % cfg.train.val_freq == 0 or self.epoch == cfg.train.n_epochs:
                 val_metrics = self.evaluate()
@@ -312,7 +358,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
                             "Best epoch: %d, Best %s: %.4f\n"
                             % (self.epoch, "loss", self.best_loss_logger.best_loss)
                         )
-                None if cfg.train.dry else wandb.log(val_metrics, step=self.epoch)
+                self._log_wandb(val_metrics)
 
         if self.epoch % cfg.train.save_freq == 0:
             self.model.save(f"{cfg.experiment_dir}/model_{self.epoch}.ckpt", self.epoch, self.optimizer, self.scheduler)
@@ -324,8 +370,9 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
         cfg = self.cfg
         if self.fabric.is_global_zero:
             self.model.save(f"{cfg.experiment_dir}/model_final.ckpt", self.epoch, self.optimizer, self.scheduler)
-            None if cfg.train.dry else print(f"finished training in {wandb.run.dir}")
-            None if cfg.train.dry else wandb.finish()
+            if self._wandb_enabled() and wandb.run is not None:
+                print(f"finished training in {wandb.run.dir}")
+                wandb.finish()
 
     @torch.no_grad()
     def evaluate(self, tag="val"):
@@ -369,7 +416,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
             dist.all_gather_object(gathered_results, results)
             if self.fabric.is_global_zero:
                 gathered_results = merge_results(gathered_results)
-                None if cfg.train.dry else wandb.log(gathered_results, step=self.epoch)
+                self._log_wandb(gathered_results)
 
                 for k in list(gathered_results.keys()):
                     if k.startswith("rollout/vis_"):

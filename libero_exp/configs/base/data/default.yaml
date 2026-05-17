@@ -1,7 +1,7 @@
 # benchmark related
 benchmark_envs: ["libero_spatial", "libero_object", "libero_goal", "libero_90", "libero_10", "libero_100"]
 env_name: "libero_goal"
-root_dir: "/root/code/LIBERO/libero/datasets" 
+root_dir: "/datastor2/mrudolph/LIBERO/datasets"
 
 task_order_index: 0                 # if 0, demo list is [demo_0, demo_1, ...]
 train_ratio: 0.9                    # use xx% as trainset
@@ -31,6 +31,6 @@ obs_key_mapping:
   joint_states: robot0_joint_pos
 
 # language
-embedding_model_path: "/root/model/bert-base-cased" 
+embedding_model_path: "bert-base-cased" 
 task_embedding_format: "bert"       # language tokenizer
 max_word_len: 25

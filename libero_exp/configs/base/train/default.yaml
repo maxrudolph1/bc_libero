@@ -16,6 +16,9 @@ num_workers: 8
 
 val_freq: 5
 save_freq: 10
+log_freq: 10                    # wandb train metrics every N batches (0 = epoch end only)
+print_freq: 50                  # console train metrics every N batches
+epoch_log_freq: 1               # console epoch summary every N epochs
 
 grad_clip: 100.
 loss_scale: 1.0

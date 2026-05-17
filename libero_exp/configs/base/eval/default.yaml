@@ -4,7 +4,7 @@ debug: false
 
 batch_size: 64
 num_workers: 4
-eval_every: ${train.save_freq}
+eval_every: ${train.epoch_log_freq}
 
 # rollout
 enable_rollout: false
