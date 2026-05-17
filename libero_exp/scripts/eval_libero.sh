@@ -17,4 +17,4 @@ python eval_libero.py \
     --config-path=${LOAD_PATH} \
     --config-name=config.yaml \
     eval.load_path=${LOAD_PATH} \
-    eval.eval_all=${EVAL_ALL}
+    eval.eval_all=${EVAL_ALL} 

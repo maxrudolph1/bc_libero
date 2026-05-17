@@ -7,7 +7,7 @@ num_workers: 4
 eval_every: ${train.epoch_log_freq}
 
 # rollout
-enable_rollout: false
+enable_rollout: true
 eval_all: false   # if false, only evaluate on final checkpoint
 
 # other

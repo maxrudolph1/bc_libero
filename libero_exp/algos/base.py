@@ -227,6 +227,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
     def _log_wandb(self, metrics, step=None):
         if not self._wandb_enabled() or wandb.run is None:
             return
+        metrics = {**metrics, "epoch": getattr(self, "epoch", 0)}
         wandb.log(metrics, step=self.global_step if step is None else step)
 
     def _train_batch_metrics(self):
@@ -248,6 +249,9 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
             init_metrics = self.evaluate(tag="init")
             self.metric_logger.update(**init_metrics)
             self._log_wandb(init_metrics, step=0)
+        self.fabric.barrier()
+        if cfg.eval.enable_rollout:
+            self.rollout_tasks(log_video=True, wandb_step=0)
         self.fabric.barrier()
 
     def before_epoch(self):
@@ -360,9 +364,15 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
                         )
                 self._log_wandb(val_metrics)
 
+        if cfg.eval.enable_rollout:
+            log_video = (
+                self.epoch % cfg.train.save_freq == 0
+                or self.epoch == cfg.train.n_epochs
+            )
+            self.rollout_tasks(log_video=log_video)
+
         if self.epoch % cfg.train.save_freq == 0:
             self.model.save(f"{cfg.experiment_dir}/model_{self.epoch}.ckpt", self.epoch, self.optimizer, self.scheduler)
-            self.rollout_tasks()
 
         self.fabric.barrier()
 
@@ -403,26 +413,49 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
 
         return out_dict
 
-    def rollout_tasks(self):
+    def rollout_tasks(self, log_video=False, wandb_step=None):
         cfg = self.cfg
-        if cfg.eval.enable_rollout:
-            if cfg.train.debug:
-                cfg.env.horizon = 10
-                
-            results = rollout(cfg, self.rollout_env, self.model, cfg.env.num_env_rollouts // cfg.env.env_num, horizon=cfg.env.horizon)
-            
-            self.fabric.barrier()
-            gathered_results = [{} for _ in range(self.fabric.world_size)]
-            dist.all_gather_object(gathered_results, results)
-            if self.fabric.is_global_zero:
-                gathered_results = merge_results(gathered_results)
-                self._log_wandb(gathered_results)
+        if not cfg.eval.enable_rollout:
+            return
 
-                for k in list(gathered_results.keys()):
-                    if k.startswith("rollout/vis_"):
-                        results.pop(k)
+        if cfg.train.debug:
+            cfg.env.horizon = 10
 
-                self.metric_logger.update(**results)
+        results = rollout(
+            cfg,
+            self.rollout_env,
+            self.model,
+            cfg.env.num_env_rollouts // cfg.env.env_num,
+            horizon=cfg.env.horizon,
+            return_wandb_video=log_video and self._wandb_enabled(),
+        )
+
+        self.fabric.barrier()
+        gathered_results = [{} for _ in range(self.fabric.world_size)]
+        dist.all_gather_object(gathered_results, results)
+        if self.fabric.is_global_zero:
+            gathered_results = merge_results(gathered_results)
+            # Use global_step (not epoch): training logs advance global_step each batch,
+            # and wandb ignores logs with step < the current step.
+            wandb_step = self.global_step if wandb_step is None else wandb_step
+            scalar_metrics = {
+                k: v
+                for k, v in gathered_results.items()
+                if not k.startswith("rollout/vis_")
+            }
+            wandb_metrics = dict(scalar_metrics)
+            if log_video:
+                wandb_metrics.update(
+                    {
+                        k: v
+                        for k, v in gathered_results.items()
+                        if k.startswith("rollout/vis_")
+                    }
+                )
+            self._log_wandb(wandb_metrics, step=wandb_step)
+            self.metric_logger.update(**scalar_metrics)
+
+        self.fabric.barrier()
 
     def reset(self):
         self.policy.reset()
