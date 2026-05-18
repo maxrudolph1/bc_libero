@@ -10,20 +10,26 @@ from collections import defaultdict, deque
 from omegaconf import DictConfig, OmegaConf
 
 
-def init_wandb(cfg):
+def init_wandb(cfg, group=None):
     cfg = OmegaConf.to_container(cfg, resolve=True)
     cfg = OmegaConf.create(cfg)
     pretty_print_cfg(cfg)
     wandb_cfg = prepare_wandb_cfg(cfg)
 
     os.makedirs(cfg.wandb.dir, exist_ok=True)
-    wandb.init(
-        dir=cfg.wandb.dir,
-        config=wandb_cfg,
-        project=cfg.wandb.project,
-        name=cfg.wandb.name,
-        group=cfg.wandb.group,
-    )
+    init_kwargs = {
+        "dir": cfg.wandb.dir,
+        "config": wandb_cfg,
+        "project": cfg.wandb.project,
+        "name": cfg.wandb.name,
+    }
+    resolved_group = group
+    if resolved_group is None and OmegaConf.select(cfg, "wandb.group") is not None:
+        resolved_group = cfg.wandb.group
+    if resolved_group is not None and str(resolved_group) not in ("", "None", "null"):
+        init_kwargs["group"] = str(resolved_group)
+
+    wandb.init(**init_kwargs)
     OmegaConf.save(cfg, f"{wandb.run.dir}/config.yaml")
 
 

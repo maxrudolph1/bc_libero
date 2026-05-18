@@ -151,24 +151,72 @@ class TruncatedSequenceDataset(Dataset):
         return self.sequence_dataset.__getitem__(idx)
 
 
+def validate_dual_task_cfg(cfg):
+    """Require env.task_id to match data.dual_task.focused_task_id when dual-task is on."""
+    if not cfg.data.dual_task.enable:
+        return
+
+    focused_task_id = cfg.data.dual_task.focused_task_id
+    env_task_id = cfg.env.task_id
+    if env_task_id is None:
+        raise ValueError(
+            "data.dual_task.enable=true requires env.task_id to be set to the "
+            f"focused task index (got None). Set env.task_id=[{focused_task_id}]."
+        )
+
+    if isinstance(env_task_id, int):
+        env_task_ids = [env_task_id]
+    else:
+        env_task_ids = list(env_task_id)
+
+    if len(env_task_ids) != 1:
+        raise ValueError(
+            "data.dual_task.enable=true requires env.task_id to contain exactly one "
+            f"task index, got {env_task_ids}. "
+            f"Set env.task_id=[{focused_task_id}]."
+        )
+
+    if env_task_ids[0] != focused_task_id:
+        raise ValueError(
+            f"data.dual_task.focused_task_id ({focused_task_id}) must match "
+            f"env.task_id ({env_task_ids[0]}). Set both to the same task index."
+        )
+
+
 class DualTaskBatchDataset(Dataset):
     """
-    Pairs one sample from a fixed task with one sample drawn uniformly from all tasks.
+    Pairs one sample from a fixed task with one mixed sample from all tasks.
 
     Each __getitem__ returns {"focused": sample, "mixed": sample}. Use
     collate_dual_task_batch in the DataLoader to obtain two batches per step:
 
-        data["focused"]  # batch from cfg.data.dual_task.focused_task_id
-        data["mixed"]    # batch with demos from every task (uniform over pooled data)
+        data["focused"]  # standard BC sequence batch
+        data["mixed"]    # obs at t and obs at t+K (same trajectory, random K)
+
+    Mixed samples contain:
+        obs, obs_future, task_emb, task_id, future_step_k
     """
 
-    def __init__(self, task_datasets, focused_task_id=0):
+    def __init__(
+        self,
+        task_datasets,
+        focused_task_id=0,
+        future_step_min=1,
+        future_step_max=10,
+    ):
         if not task_datasets:
             raise ValueError("task_datasets must be a non-empty list of per-task datasets")
         if focused_task_id < 0 or focused_task_id >= len(task_datasets):
             raise ValueError(
                 f"focused_task_id={focused_task_id} out of range for "
                 f"{len(task_datasets)} tasks"
+            )
+        if future_step_min < 1:
+            raise ValueError(f"future_step_min must be >= 1, got {future_step_min}")
+        if future_step_max < future_step_min:
+            raise ValueError(
+                f"future_step_max ({future_step_max}) must be >= "
+                f"future_step_min ({future_step_min})"
             )
 
         self.task_datasets = task_datasets
@@ -177,6 +225,9 @@ class DualTaskBatchDataset(Dataset):
         self.all_tasks_dataset = ConcatDataset(task_datasets)
         self.n_tasks = len(task_datasets)
         self._mixed_pool_size = len(self.all_tasks_dataset)
+        self.future_step_min = future_step_min
+        self.future_step_max = future_step_max
+        self._concat_cumulative_sizes = self.all_tasks_dataset.cumulative_sizes
 
     def __len__(self):
         return len(self.focused_dataset)
@@ -184,12 +235,51 @@ class DualTaskBatchDataset(Dataset):
     def _sample_mixed_index(self):
         return random.randrange(self._mixed_pool_size)
 
+    def _resolve_concat_index(self, concat_idx):
+        if concat_idx < 0:
+            raise IndexError(f"concat_idx must be non-negative, got {concat_idx}")
+        dataset_idx = 0
+        if self._concat_cumulative_sizes:
+            dataset_idx = int(
+                np.searchsorted(self._concat_cumulative_sizes, concat_idx, side="right")
+            )
+        local_idx = concat_idx
+        if dataset_idx > 0:
+            local_idx = concat_idx - self._concat_cumulative_sizes[dataset_idx - 1]
+        return dataset_idx, local_idx, self.task_datasets[dataset_idx]
+
+    def _build_mixed_future_pair(self, concat_idx, rng):
+        task_id, local_idx, vl_dataset = self._resolve_concat_index(concat_idx)
+        seq_dataset = vl_dataset.sequence_dataset
+        _, index_in_demo, demo_length = seq_dataset.get_index_location(local_idx)
+
+        window_end = min(index_in_demo + seq_dataset.seq_length - 1, demo_length - 1)
+        t = int(rng.randint(index_in_demo, window_end + 1))
+
+        future_k = int(rng.randint(self.future_step_min, self.future_step_max + 1))
+        future_t = int(np.clip(t + future_k, 0, demo_length - 1))
+        actual_k = future_t - t
+
+        obs = seq_dataset.get_single_obs(local_idx, timestep_offset=t - index_in_demo)
+        obs_future = seq_dataset.get_single_obs(
+            local_idx, timestep_offset=future_t - index_in_demo
+        )
+
+        return {
+            "obs": obs,
+            "obs_future": obs_future,
+            "task_emb": vl_dataset.task_emb,
+            "task_id": task_id,
+            "future_step_k": actual_k,
+        }
+
     def __getitem__(self, idx):
         focused_idx = idx % len(self.focused_dataset)
         mixed_idx = self._sample_mixed_index()
+        rng = np.random.RandomState(seed=(int(idx) + 1) * 9973 + int(mixed_idx))
         return {
             "focused": self.focused_dataset[focused_idx],
-            "mixed": self.all_tasks_dataset[mixed_idx],
+            "mixed": self._build_mixed_future_pair(mixed_idx, rng),
         }
 
 

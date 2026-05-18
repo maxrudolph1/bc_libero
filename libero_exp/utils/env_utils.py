@@ -62,6 +62,8 @@ def build_env(cfg, env_type, env_name, task_id=None, img_size=128,
                 torch.save(task_embs, file_path)     
             task_suite.set_task_embs(task_embs)
 
+            if not isinstance(task_id, list):
+                task_id = [int(task_id)]
             for task_i in task_id: 
                 env, init_states_ = make_libero_env(task_suite, task_i, img_size, env_num, gpu_id_for_each_env[env_idx])
                 task_emb = task_suite.get_task_emb(task_i)

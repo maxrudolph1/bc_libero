@@ -103,3 +103,4 @@ ipython_config.py
 
 
 uv.lock
+slurm_jobs/

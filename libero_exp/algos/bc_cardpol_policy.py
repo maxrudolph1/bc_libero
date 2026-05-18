@@ -1,7 +1,27 @@
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from libero.libero.benchmark import get_benchmark
 from tqdm import tqdm
 
+from ..data.get_dataset import validate_dual_task_cfg
+from ..utils.train_utils import setup_optimizer
 from .base import BaseAlgo
+
+
+class TaskPairClassifier(nn.Module):
+    """Predict task id from a pair of pre-policy representations (z, z')."""
+
+    def __init__(self, rep_dim, n_tasks, hidden_dim=256):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(2 * rep_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, n_tasks),
+        )
+
+    def forward(self, z, z_future):
+        return self.net(torch.cat([z, z_future], dim=-1))
 
 
 class BC_CARDPOL_Policy(BaseAlgo):
@@ -12,12 +32,14 @@ class BC_CARDPOL_Policy(BaseAlgo):
     """
 
     def __init__(self, cfg, inference=False, device="cuda"):
+        if not inference:
+            if not cfg.data.dual_task.enable:
+                raise ValueError(
+                    "BC_CARDPOL_Policy requires data.dual_task.enable=true. "
+                    "Set data.dual_task.focused_task_id to the target task index."
+                )
+            validate_dual_task_cfg(cfg)
         super().__init__(cfg, inference, device)
-        if not inference and not cfg.data.dual_task.enable:
-            raise ValueError(
-                "BC_CARDPOL_Policy requires data.dual_task.enable=true. "
-                "Set data.dual_task.focused_task_id to the target task index."
-            )
 
     def build_dataloader(self, cfg):
         if not cfg.data.dual_task.enable:
@@ -25,7 +47,29 @@ class BC_CARDPOL_Policy(BaseAlgo):
                 "BC_CARDPOL_Policy requires data.dual_task.enable=true. "
                 "Set data.dual_task.focused_task_id to the target task index."
             )
+        validate_dual_task_cfg(cfg)
         return super().build_dataloader(cfg)
+
+    def build_model(self, cfg, shape_meta):
+        super().build_model(cfg, shape_meta)
+        rep_dim = self._get_rep_dim(cfg)
+        n_tasks = get_benchmark(cfg.data.env_name)(cfg.data.task_order_index).n_tasks
+        hidden_dim = cfg.train.get("rep_classifier_hidden", 256)
+        self.model.add_module(
+            "rep_task_classifier",
+            TaskPairClassifier(rep_dim, n_tasks, hidden_dim=hidden_dim),
+        )
+        self.optimizer = setup_optimizer(cfg.train.optimizer, self.model)
+
+    @staticmethod
+    def _get_rep_dim(cfg):
+        policy_type = cfg.policy.policy_type
+        if policy_type in ("BCTransformerPolicy", "BCViLTPolicy", "BCDPPolicy", "BCMLPPolicy"):
+            return cfg.policy.embed_size
+        if policy_type == "BCRNNPolicy":
+            direction = 2 if cfg.policy.rnn_bidirectional else 1
+            return direction * cfg.policy.rnn_hidden_size
+        raise ValueError(f"Unsupported policy_type={policy_type} for representation loss")
 
     @staticmethod
     def _split_batch(data):
@@ -36,8 +80,18 @@ class BC_CARDPOL_Policy(BaseAlgo):
             )
         return data["focused"], data["mixed"]
 
-    def get_pre_policy_representation(self, data, augmentation=None):
+    @staticmethod
+    def _pool_representation(z):
+        if z.dim() == 3:
+            return z[:, -1]
+        if z.dim() == 2:
+            return z
+        raise ValueError(f"Expected representation dim 2 or 3, got shape {tuple(z.shape)}")
+
+    def get_pre_policy_representation(self, data, augmentation=None, obs_key="obs"):
         """Action-free representation immediately before policy_head."""
+        if obs_key != "obs":
+            data = {**data, "obs": data[obs_key]}
         data = self.model.preprocess_input(data, augmentation=augmentation)
         policy_type = self.cfg.policy.policy_type
 
@@ -84,20 +138,29 @@ class BC_CARDPOL_Policy(BaseAlgo):
 
         return bc_loss
 
-    def compute_representation_loss(self, z):
+    def compute_representation_loss(self, z, z_future, mixed_data):
         """
-        Action-free objective on mixed-batch representations (pre policy_head).
+        Classify which task produced (z, z') with cross-entropy on task_id.
+        """
+        if "task_id" not in mixed_data:
+            raise ValueError(
+                "Mixed batch is missing 'task_id'. "
+                "Use DualTaskBatchDataset with data.dual_task.enable=true."
+            )
 
-        Override or extend this method when the representation-learning loss is defined.
-        """
-        return z.new_zeros(())
+        z = self._pool_representation(z)
+        z_future = self._pool_representation(z_future)
+        logits = self.model.rep_task_classifier(z, z_future)
+        task_ids = mixed_data["task_id"].long().to(device=z.device)
+        return F.cross_entropy(logits, task_ids)
 
     def forward_backward(self, data):
         focused, mixed = self._split_batch(data)
 
         bc_loss = self.compute_bc_loss(focused)
-        z_mixed = self.get_pre_policy_representation(mixed)
-        rep_loss = self.compute_representation_loss(z_mixed)
+        z = self.get_pre_policy_representation(mixed, obs_key="obs")
+        z_future = self.get_pre_policy_representation(mixed, obs_key="obs_future")
+        rep_loss = self.compute_representation_loss(z, z_future, mixed)
         rep_scale = self.cfg.train.get("rep_loss_scale", 1.0)
         loss = bc_loss + rep_scale * rep_loss
 

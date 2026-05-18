@@ -497,6 +497,39 @@ class SequenceDataset(torch.utils.data.Dataset):
 
         return meta
 
+    def get_index_location(self, index):
+        """Map a flat dataset index to (demo_id, timestep, demo_length)."""
+        demo_id = self._index_to_demo_id[index]
+        demo_start_index = self._demo_id_to_start_indices[demo_id]
+        demo_length = self._demo_id_to_demo_length[demo_id]
+        demo_index_offset = 0 if self.pad_frame_stack else (self.n_frame_stack - 1)
+        index_in_demo = index - demo_start_index + demo_index_offset
+        return demo_id, index_in_demo, demo_length
+
+    def get_single_obs(self, index, timestep_offset=0):
+        """
+        Fetch a single-timestep observation from the same trajectory as @index.
+
+        Args:
+            index: flat dataset index (window start used by __getitem__)
+            timestep_offset: added to the window-start timestep before clipping to demo bounds
+        """
+        demo_id, index_in_demo, demo_length = self.get_index_location(index)
+        timestep = int(np.clip(index_in_demo + timestep_offset, 0, demo_length - 1))
+        obs = self.get_obs_sequence_from_demo(
+            demo_id,
+            index_in_demo=timestep,
+            keys=self.obs_keys,
+            num_frames_to_stack=0,
+            seq_length=1,
+            prefix="obs",
+        )
+        if self.hdf5_normalize_obs:
+            obs = ObsUtils.normalize_obs(
+                obs, obs_normalization_stats=self.obs_normalization_stats
+            )
+        return obs
+
     def get_sequence_from_demo(self, demo_id, index_in_demo, keys, num_frames_to_stack=0, seq_length=1):
         """
         Extract a (sub)sequence of data items from a demo given the @keys of the items.

@@ -13,9 +13,12 @@ data:
   dual_task:
     enable: true
     focused_task_id: 0
+    future_step_min: 1
+    future_step_max: 10
 
 train:
   rep_loss_scale: 1.0
+  rep_classifier_hidden: 256
 
 hydra:
   run:

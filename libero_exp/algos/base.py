@@ -19,6 +19,7 @@ from ..data.get_dataset import (
     DualTaskBatchDataset,
     collate_dual_task_batch,
     get_dataset,
+    validate_dual_task_cfg,
 )
 from ..models import BCRNNPolicy, BCTransformerPolicy, BCViLTPolicy, BCMLPPolicy, BCDPPolicy
 from ..utils.data_utils import get_task_embs
@@ -164,9 +165,12 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
 
         train_datasets = [SequenceVLDataset(ds, emb) for (ds, emb) in zip(train_manip_datasets, task_embs)]
         if cfg.data.dual_task.enable:
+            validate_dual_task_cfg(cfg)
             train_dataset = DualTaskBatchDataset(
                 train_datasets,
                 focused_task_id=cfg.data.dual_task.focused_task_id,
+                future_step_min=cfg.data.dual_task.future_step_min,
+                future_step_max=cfg.data.dual_task.future_step_max,
             )
             train_collate_fn = collate_dual_task_batch
             print(
@@ -221,12 +225,31 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
 
         self.after_train()
 
+    def get_wandb_group(self):
+        """
+        Wandb group for this run. Defaults to cfg.wandb.group (Hydra / CLI override).
+        Override in a subclass to set programmatically.
+        """
+        wandb_cfg = getattr(self.cfg, "wandb", None)
+        if wandb_cfg is None:
+            return None
+        group = wandb_cfg.get("group", None)
+        if group is None or str(group) in ("", "None", "null"):
+            return None
+        return str(group)
+
+    def init_wandb_run(self, group=None):
+        """Initialize wandb; pass group to override cfg.wandb.group for this run."""
+        if group is None:
+            group = self.get_wandb_group()
+        init_wandb(self.cfg, group=group)
+
     def before_train(self):
         cfg = self.cfg
         self.metric_logger = MetricLogger(delimiter=" ")
         self.best_loss_logger = BestAvgLoss(window_size=5)
         if self._wandb_enabled():
-            init_wandb(cfg)
+            self.init_wandb_run()
 
         self.losses = MetricMeter()
         self.batch_time = AverageMeter()

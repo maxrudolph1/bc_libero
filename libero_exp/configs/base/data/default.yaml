@@ -39,3 +39,5 @@ max_word_len: 25
 dual_task:
   enable: false
   focused_task_id: 0                # benchmark task index for the "focused" batch
+  future_step_min: 1                # min K for mixed-batch (obs_t, obs_{t+K}) pairs
+  future_step_max: 10               # max K (inclusive); sampled uniformly per example

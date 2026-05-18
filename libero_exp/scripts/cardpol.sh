@@ -37,8 +37,9 @@ python train_libero.py \
     train.mine_mi_loss_scale=${MINE} \
     train.mi_loss_scale=${MI} \
     train.train_gpus=[0] \
-    train.rep_loss_scale=1.0 \
+    train.rep_loss_scale=0.0 \
     data.dual_task.enable=true \
-    data.dual_task.focused_task_id=0
+    data.dual_task.focused_task_id=2 \
+    env.task_id=2
     # env.horizon=10
 
