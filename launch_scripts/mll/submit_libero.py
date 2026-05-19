@@ -219,6 +219,7 @@ def build_cardpol_sweep_config(
         "env.task_id": [task_id],
         "wandb.project": wandb_project,
         "wandb.group": wandb_run_group(wandb_group, env_name, task_id, rep_loss_scale),
+        "wandb.policy_arch": config_names,
     }
 
 

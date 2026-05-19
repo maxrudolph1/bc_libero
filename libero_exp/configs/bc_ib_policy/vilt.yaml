@@ -18,6 +18,7 @@ hydra:
 
 wandb:
   use_wandb: true
+  policy_arch: vilt
   project: bc-ib-vilt
   name: ${data.env_name}_${algo.algo_name}_${now:%m%d}_${now:%H%M}_seed${train.seed}_ratio${data.train_ratio}_scale${train.mi_loss_scale}_${train.mine_mi_loss_scale}_${hydra:job.num}
   group: ${data.env_name}_${algo.algo_name}

@@ -9,12 +9,38 @@ import numpy as np
 from collections import defaultdict, deque
 from omegaconf import DictConfig, OmegaConf
 
+_POLICY_ARCH_FROM_TYPE = {
+    "BCMLPPolicy": "mlp",
+    "BCTransformerPolicy": "transformer",
+    "BCDPPolicy": "dp",
+    "BCViLTPolicy": "vilt",
+    "BCRNNPolicy": "rnn",
+}
+
+
+def resolve_policy_arch(cfg):
+    """
+    Policy backbone label for wandb (config field + run tag).
+    Prefer wandb.policy_arch; fall back to policy.policy_type.
+    """
+    arch = OmegaConf.select(cfg, "wandb.policy_arch")
+    if arch is not None and str(arch) not in ("", "None", "null", "???"):
+        return str(arch)
+    policy_type = OmegaConf.select(cfg, "policy.policy_type")
+    if policy_type is not None:
+        return _POLICY_ARCH_FROM_TYPE.get(str(policy_type), str(policy_type))
+    return "unknown"
+
 
 def init_wandb(cfg, group=None):
     cfg = OmegaConf.to_container(cfg, resolve=True)
     cfg = OmegaConf.create(cfg)
     pretty_print_cfg(cfg)
     wandb_cfg = prepare_wandb_cfg(cfg)
+    policy_arch = resolve_policy_arch(cfg)
+    wandb_cfg["policy_arch"] = policy_arch
+    if isinstance(wandb_cfg.get("wandb"), dict):
+        wandb_cfg["wandb"]["policy_arch"] = policy_arch
 
     os.makedirs(cfg.wandb.dir, exist_ok=True)
     init_kwargs = {
@@ -22,6 +48,7 @@ def init_wandb(cfg, group=None):
         "config": wandb_cfg,
         "project": cfg.wandb.project,
         "name": cfg.wandb.name,
+        "tags": [f"policy_arch:{policy_arch}"],
     }
     resolved_group = group
     if resolved_group is None and OmegaConf.select(cfg, "wandb.group") is not None:

@@ -1,0 +1,36 @@
+defaults:
+  - _self_
+  - ../base/data@data: default
+  - ../base/algo@algo: bc_cardpol_policy
+  - ../base/policy@policy: mlp_policy
+  - ../base/train@train: default
+  - ../base/eval@eval: default
+  - ../base/env@env: default
+
+experiment_dir: ???
+
+data:
+  dual_task:
+    enable: true
+    focused_task_id: 0
+    future_step_min: 1
+    future_step_max: 10
+
+train:
+  rep_loss_scale: 1.0
+  rep_classifier_hidden: 256
+
+hydra:
+  run:
+    dir: ./outputs/libero/${algo.algo_name}/mlp/${data.env_name}/ratio${data.train_ratio}_task${data.dual_task.focused_task_id}/${now:%m%d}_${now:%H%M}_seed${train.seed}
+  sweep:
+    dir: ./outputs/libero/${algo.algo_name}/mlp/${data.env_name}/ratio${data.train_ratio}_task${data.dual_task.focused_task_id}/${now:%m%d}_${now:%H%M}_seed${train.seed}
+    subdir: ${hydra:job.num}
+
+wandb:
+  use_wandb: true
+  policy_arch: mlp
+  project: bc-cardpol-mlp
+  name: ${data.env_name}_${algo.algo_name}_mlp_task${data.dual_task.focused_task_id}_${now:%m%d}_${now:%H%M}_seed${train.seed}_ratio${data.train_ratio}_${hydra:job.num}
+  group: ${data.env_name}_${algo.algo_name}_mlp
+  dir: ./wandb/${env.env_type}/${algo.algo_name}/mlp/${data.env_name}/ratio${data.train_ratio}
