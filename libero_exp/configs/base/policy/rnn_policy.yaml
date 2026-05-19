@@ -7,6 +7,7 @@ defaults:
 
 
 policy_type: BCRNNPolicy
+use_language_conditioning: true
 image_embed_size: 64
 text_embed_size: 32
 

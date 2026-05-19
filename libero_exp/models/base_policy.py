@@ -72,6 +72,26 @@ class BasePolicy(nn.Module, metaclass=PolicyMeta):
         )
         self.img_aug = DataAugGroup((color_aug, translation_aug))
 
+    def use_language_conditioning(self):
+        """Whether the BC policy uses task language (token + image FiLM)."""
+        return self.cfg.policy.get("use_language_conditioning", True)
+
+    def get_image_langs(self, data, batch_size, seq_len, *, use_language=None):
+        """
+        Language vectors for ResNet FiLM, shaped (B*T, L).
+        Pass use_language=True from CARDPol rep encoding while policy training disables it.
+        """
+        if use_language is None:
+            use_language = self.use_language_conditioning()
+        if not use_language:
+            return None
+        return (
+            data["task_emb"]
+            .reshape(batch_size, 1, -1)
+            .repeat(1, seq_len, 1)
+            .reshape(batch_size * seq_len, -1)
+        )
+
     def forward(self, data):
         """
         The forward function for training.

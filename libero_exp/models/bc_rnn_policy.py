@@ -162,10 +162,7 @@ class BCRNNPolicy(BasePolicy):
             B, T, C, H, W = x.shape
             e = self.image_encoders[img_name]["encoder"](
                 x.reshape(B * T, C, H, W),
-                langs=data["task_emb"]
-                .reshape(B, 1, -1)
-                .repeat(1, T, 1)
-                .reshape(B * T, -1),
+                langs=self.get_image_langs(data, B, T),
             ).view(B, T, -1)
             encoded.append(e)
 
@@ -174,7 +171,15 @@ class BCRNNPolicy(BasePolicy):
         encoded = torch.cat(encoded, -1)  # (B, T, H_all)
 
         # 3. language encoding
-        lang_h = self.language_encoder(data)  # (B, H)
+        if self.use_language_conditioning():
+            lang_h = self.language_encoder(data)  # (B, H)
+        else:
+            lang_h = torch.zeros(
+                encoded.shape[0],
+                self.cfg.policy.language_encoder.network_kwargs.output_size,
+                device=encoded.device,
+                dtype=encoded.dtype,
+            )
         encoded = torch.cat(
             [encoded, lang_h.unsqueeze(1).expand(-1, encoded.shape[1], -1)], dim=-1
         )

@@ -197,6 +197,7 @@ def build_cardpol_sweep_config(
     train_ratio: float,
     wandb_group: str,
     wandb_project: str = "bc-cardpol-transformer",
+    use_language_conditioning: bool = True,
 ) -> Dict[str, Any]:
     """One sweep entry: fixed env / task / rep scale; seeds expanded via product."""
     return {
@@ -214,6 +215,7 @@ def build_cardpol_sweep_config(
         "data.dual_task.focused_task_id": task_id,
         "data.dual_task.future_step_min": 1,
         "data.dual_task.future_step_max": 10,
+        "policy.use_language_conditioning": str(use_language_conditioning).lower(),
         "env.task_id": [task_id],
         "wandb.project": wandb_project,
         "wandb.group": wandb_run_group(wandb_group, env_name, task_id, rep_loss_scale),
@@ -244,6 +246,11 @@ if __name__ == "__main__":
         default="bc-cardpol-transformer",
         help="Wandb project name passed to Hydra as wandb.project.",
     )
+    parser.add_argument(
+        "--no-policy-language",
+        action="store_true",
+        help="Disable language conditioning in the BC policy (task_emb still in batches for CARDPol).",
+    )
     cli = parser.parse_args()
 
     libero_envs = [
@@ -259,9 +266,9 @@ if __name__ == "__main__":
     ]
     config_names = [
         "transformer",
-        "vilt",
+        # "vilt",
         # "rnn",
-        "mlp",
+        # "mlp",
     ]
     seeds = [0, 1, 2,]
     task_ids = [5,6,7]
@@ -279,6 +286,7 @@ if __name__ == "__main__":
             train_ratio=train_ratio,
             wandb_group=cli.wandb_group,
             wandb_project=cli.wandb_project,
+            use_language_conditioning=not cli.no_policy_language,
         )
         for env_name in libero_envs
         for task_id in task_ids

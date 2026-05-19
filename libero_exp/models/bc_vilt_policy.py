@@ -175,7 +175,15 @@ class BCViLTPolicy(BasePolicy):
         B, T = img_encoded.shape[:2]
 
         # 2. encode task_emb
-        text_encoded = self.language_encoder_spatial(data)  # (B, E)
+        if self.use_language_conditioning():
+            text_encoded = self.language_encoder_spatial(data)  # (B, E)
+        else:
+            text_encoded = torch.zeros(
+                B,
+                self.cfg.policy.embed_size,
+                device=img_encoded.device,
+                dtype=img_encoded.dtype,
+            )
         text_encoded = text_encoded.view(B, 1, 1, -1).expand(
             -1, T, -1, -1
         )  # (B, T, 1, E) = (B, 10, 1, 128)
@@ -204,7 +212,12 @@ class BCViLTPolicy(BasePolicy):
         extra = self.extra_encoder(data["obs"])  # (B, T, num_extra, E') = (B, 10, 2, 64)
 
         # 7. encode language, treat it as action token
-        text_encoded_ = self.language_encoder_temporal(data)  # (B, E') = (B, 64)
+        if self.use_language_conditioning():
+            text_encoded_ = self.language_encoder_temporal(data)  # (B, E') = (B, 64)
+        else:
+            text_encoded_ = torch.zeros(
+                B, out.shape[-1], device=out.device, dtype=out.dtype
+            )
         text_encoded_ = text_encoded_.view(B, 1, 1, -1).expand(
             -1, T, -1, -1
         )  # (B, T, 1, E') = (B, 10, 1, 64)

@@ -1,9 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from einops import rearrange
 from libero.libero.benchmark import get_benchmark
-from robomimic.utils import tensor_utils as TensorUtils
 from torch.utils.data import DataLoader, RandomSampler
 
 from ..data.get_dataset import (
@@ -16,7 +14,7 @@ from .base import BaseAlgo
 
 
 class TaskPairClassifier(nn.Module):
-    """Predict task id from a pair of visual representations (z, z')."""
+    """Predict task id from a pair of spatial input representations (x, x')."""
 
     def __init__(self, rep_dim, n_tasks, hidden_dim=256):
         super().__init__()
@@ -26,15 +24,15 @@ class TaskPairClassifier(nn.Module):
             nn.Linear(hidden_dim, n_tasks),
         )
 
-    def forward(self, z, z_future):
-        return self.net(torch.cat([z, z_future], dim=-1))
+    def forward(self, x, x_future):
+        return self.net(torch.cat([x, x_future], dim=-1))
 
 
 class BC_CARDPOL_Policy(BaseAlgo):
     """
     CARD-style training with dual-task batches:
       - focused: standard BC on the configured task
-      - mixed: auxiliary loss on visual representations only
+      - mixed: auxiliary loss on spatial input representations (x)
     """
 
     def __init__(self, cfg, inference=False, device="cuda"):
@@ -98,7 +96,16 @@ class BC_CARDPOL_Policy(BaseAlgo):
                 for name in shape_meta["all_shapes"]
                 if "rgb" in name or "depth" in name
             )
-            return n_img * cfg.policy.image_embed_size
+            extra_dim = (
+                int(cfg.data.use_joint) * 7
+                + int(cfg.data.use_gripper) * 2
+                + int(cfg.data.use_ee) * 3
+            )
+            return (
+                n_img * cfg.policy.image_embed_size
+                + extra_dim
+                + cfg.policy.text_embed_size
+            )
         raise ValueError(f"Unsupported policy_type={policy_type} for representation loss")
 
     @staticmethod
@@ -111,99 +118,62 @@ class BC_CARDPOL_Policy(BaseAlgo):
         return data["focused"], data["mixed"]
 
     @staticmethod
-    def _pool_representation(z):
-        if z.dim() == 3:
-            return z[:, -1]
-        if z.dim() == 2:
-            return z
-        raise ValueError(f"Expected representation dim 2 or 3, got shape {tuple(z.shape)}")
+    def _pool_representation(x):
+        """Pool spatial input x to a fixed-size vector for the task classifier."""
+        if x.dim() == 4:
+            # (B, T, num_modalities, E): last timestep, language / action token slot
+            return x[:, -1, 0]
+        if x.dim() == 3:
+            return x[:, -1]
+        if x.dim() == 2:
+            return x
+        raise ValueError(f"Expected representation dim 2–4, got shape {tuple(x.shape)}")
 
     @staticmethod
-    def _encode_image_tokens(model, data):
-        """Per-camera image encoder outputs: (B, T, num_cameras, E)."""
+    def _encode_rnn_input(model, data, *, use_language=True):
+        """RNN input features before the temporal RNN (B, T, H)."""
         encoded = []
         for img_name in model.image_encoders.keys():
-            x = data["obs"][img_name]
-            b, t, c, h, w = x.shape
-            img_encoded = model.image_encoders[img_name]["encoder"](
-                x.reshape(b * t, c, h, w),
-                langs=data["task_emb"]
-                .reshape(b, 1, -1)
-                .repeat(1, t, 1)
-                .reshape(b * t, -1),
-            ).view(b, t, 1, -1)
-            encoded.append(img_encoded)
-        return torch.cat(encoded, dim=-2)
-
-    @staticmethod
-    def _collapse_image_modalities(visual):
-        if visual.shape[2] == 1:
-            return visual
-        return visual.mean(dim=2, keepdim=True)
-
-    def _encode_visual_vilt(self, model, data):
-        img_encoded = []
-        for img_name in model.image_encoders.keys():
-            img_encoded.append(
-                rearrange(
-                    TensorUtils.time_distributed(
-                        data["obs"][img_name], model.image_encoders[img_name]["encoder"]
-                    ),
-                    "b t c h w -> b t (h w) c",
-                )
+            obs = data["obs"][img_name]
+            b, t, c, h, w = obs.shape
+            encoded.append(
+                model.image_encoders[img_name]["encoder"](
+                    obs.reshape(b * t, c, h, w),
+                    langs=model.get_image_langs(data, b, t, use_language=use_language),
+                ).view(b, t, -1)
             )
-        img_encoded = torch.cat(img_encoded, dim=-2)
-        img_encoded += model.patch_pos_embed.unsqueeze(0)
-        b, t = img_encoded.shape[:2]
-
-        patch_modality_idx = model.modality_idx[: img_encoded.shape[2]]
-        img_encoded += model.modality_embed[None, :, patch_modality_idx, :]
-
-        spatial_token = model.spatial_token.unsqueeze(0).expand(b, t, -1, -1)
-        encoded = torch.cat([spatial_token, img_encoded], dim=-2)
-        encoded = rearrange(encoded, "b t n e -> (b t) n e")
-        out = model.spatial_transformer(encoded)[:, 0]
-        if hasattr(model, "spatial_down_sample"):
-            out = model.spatial_down_sample(out).view(b, t, 1, -1)
+        encoded.append(model.extra_encoder(data["obs"]))
+        encoded = torch.cat(encoded, dim=-1)
+        if use_language:
+            lang_h = model.language_encoder(data)
         else:
-            out = out.view(b, t, 1, -1)
-        return model.temporal_encode(out)
+            lang_h = torch.zeros(
+                encoded.shape[0],
+                model.cfg.policy.text_embed_size,
+                device=encoded.device,
+                dtype=encoded.dtype,
+            )
+        return torch.cat(
+            [encoded, lang_h.unsqueeze(1).expand(-1, encoded.shape[1], -1)],
+            dim=-1,
+        )
 
-    def get_visual_representation(self, data, augmentation=None, obs_key="obs"):
-        """Visual representation only (no language, proprio, or policy head)."""
+    def get_input_representation(self, data, augmentation=None, obs_key="obs"):
+        """
+        Spatial input representations x (pre-temporal), matching policy forward.
+        Image FiLM for the rep path uses task_emb regardless of policy.use_language_conditioning.
+        """
         if obs_key != "obs":
             data = {**data, "obs": data[obs_key]}
         data = self.model.preprocess_input(data, augmentation=augmentation)
-        policy_type = self.cfg.policy.policy_type
         model = self.model
-
-        if policy_type == "BCMLPPolicy":
-            visual = self._encode_image_tokens(model, data)
-            return visual.mean(dim=2)
+        policy_type = self.cfg.policy.policy_type
 
         if policy_type == "BCRNNPolicy":
-            encoded = []
-            for img_name in model.image_encoders.keys():
-                x = data["obs"][img_name]
-                b, t, c, h, w = x.shape
-                e = model.image_encoders[img_name]["encoder"](
-                    x.reshape(b * t, c, h, w),
-                    langs=data["task_emb"]
-                    .reshape(b, 1, -1)
-                    .repeat(1, t, 1)
-                    .reshape(b * t, -1),
-                ).view(b, t, -1)
-                encoded.append(e)
-            return torch.cat(encoded, dim=-1)
+            return self._encode_rnn_input(model, data, use_language=True)
 
-        if policy_type == "BCViLTPolicy":
-            return self._encode_visual_vilt(model, data)
-
-        if policy_type in ("BCTransformerPolicy", "BCDPPolicy"):
-            visual = self._collapse_image_modalities(
-                self._encode_image_tokens(model, data)
-            )
-            return model.temporal_encode(visual)
+        if hasattr(model, "spatial_encode"):
+            return model.spatial_encode(data)
 
         raise ValueError(f"Unsupported policy_type={policy_type}")
 
@@ -231,9 +201,9 @@ class BC_CARDPOL_Policy(BaseAlgo):
 
         return bc_loss
 
-    def compute_representation_loss(self, z, z_future, mixed_data):
+    def compute_representation_loss(self, x, x_future, mixed_data):
         """
-        Classify which task produced (z, z') with cross-entropy on task_id.
+        Classify which task produced (x, x') with cross-entropy on task_id.
         """
         if "task_id" not in mixed_data:
             raise ValueError(
@@ -241,17 +211,17 @@ class BC_CARDPOL_Policy(BaseAlgo):
                 "Use DualTaskBatchDataset with data.dual_task.enable=true."
             )
 
-        z = self._pool_representation(z)
-        z_future = self._pool_representation(z_future)
-        logits = self.model.rep_task_classifier(z, z_future)
-        task_ids = mixed_data["task_id"].long().to(device=z.device)
+        x = self._pool_representation(x)
+        x_future = self._pool_representation(x_future)
+        logits = self.model.rep_task_classifier(x, x_future)
+        task_ids = mixed_data["task_id"].long().to(device=x.device)
         return F.cross_entropy(logits, task_ids)
 
-    def compute_representation_accuracy(self, z, z_future, mixed_data):
-        z = self._pool_representation(z)
-        z_future = self._pool_representation(z_future)
-        logits = self.model.rep_task_classifier(z, z_future)
-        task_ids = mixed_data["task_id"].long().to(device=z.device)
+    def compute_representation_accuracy(self, x, x_future, mixed_data):
+        x = self._pool_representation(x)
+        x_future = self._pool_representation(x_future)
+        logits = self.model.rep_task_classifier(x, x_future)
+        task_ids = mixed_data["task_id"].long().to(device=x.device)
         preds = logits.argmax(dim=-1)
         return (preds == task_ids).float().mean()
 
@@ -259,10 +229,10 @@ class BC_CARDPOL_Policy(BaseAlgo):
         focused, mixed = self._split_batch(data)
 
         bc_loss = self.compute_bc_loss(focused)
-        z = self.get_visual_representation(mixed, obs_key="obs")
-        z_future = self.get_visual_representation(mixed, obs_key="obs_future")
-        rep_loss = self.compute_representation_loss(z, z_future, mixed)
-        rep_acc = self.compute_representation_accuracy(z, z_future, mixed)
+        x = self.get_input_representation(mixed, obs_key="obs")
+        x_future = self.get_input_representation(mixed, obs_key="obs_future")
+        rep_loss = self.compute_representation_loss(x, x_future, mixed)
+        rep_acc = self.compute_representation_accuracy(x, x_future, mixed)
         rep_scale = self.cfg.train.get("rep_loss_scale", 1.0)
         loss = bc_loss + rep_scale * rep_loss
 
@@ -285,12 +255,12 @@ class BC_CARDPOL_Policy(BaseAlgo):
     def compute_eval_batch_metrics(self, data):
         focused, mixed = self._split_batch(data)
         bc_loss = self.compute_bc_loss(focused, augmentation=False)
-        z = self.get_visual_representation(mixed, augmentation=False)
-        z_future = self.get_visual_representation(
+        x = self.get_input_representation(mixed, augmentation=False)
+        x_future = self.get_input_representation(
             mixed, augmentation=False, obs_key="obs_future"
         )
-        rep_loss = self.compute_representation_loss(z, z_future, mixed)
-        rep_acc = self.compute_representation_accuracy(z, z_future, mixed)
+        rep_loss = self.compute_representation_loss(x, x_future, mixed)
+        rep_acc = self.compute_representation_accuracy(x, x_future, mixed)
         rep_scale = self.cfg.train.get("rep_loss_scale", 1.0)
         loss = bc_loss + rep_scale * rep_loss
 

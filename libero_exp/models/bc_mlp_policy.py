@@ -87,7 +87,15 @@ class BCMLPPolicy(BasePolicy):
 
         # 2. encode language, treat it as action token
         B, T = extra.shape[:2]
-        text_encoded = self.language_encoder(data)  # (B, E)
+        if self.use_language_conditioning():
+            text_encoded = self.language_encoder(data)  # (B, E)
+        else:
+            text_encoded = torch.zeros(
+                B,
+                self.cfg.policy.embed_size,
+                device=extra.device,
+                dtype=extra.dtype,
+            )
         text_encoded = text_encoded.view(B, 1, 1, -1).expand(
             -1, T, -1, -1
         )  # (B, T, 1, E)
@@ -99,10 +107,7 @@ class BCMLPPolicy(BasePolicy):
             B, T, C, H, W = x.shape
             img_encoded = self.image_encoders[img_name]["encoder"](
                 x.reshape(B * T, C, H, W),
-                langs=data["task_emb"]
-                .reshape(B, 1, -1)
-                .repeat(1, T, 1)
-                .reshape(B * T, -1),
+                langs=self.get_image_langs(data, B, T),
             ).view(B, T, 1, -1)
             encoded.append(img_encoded)
         encoded = torch.cat(encoded, -2)  # (B, T, num_modalities, E)

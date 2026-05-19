@@ -9,6 +9,7 @@ defaults:
 
 policy_type: BCTransformerPolicy 
 embed_size: 64
+use_language_conditioning: true
 
 extra_state_encoder:
     extra_num_layers: 0

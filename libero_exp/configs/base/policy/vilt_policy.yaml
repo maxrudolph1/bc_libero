@@ -9,6 +9,7 @@ defaults:
 
 policy_type: BCViLTPolicy
 embed_size: 128
+use_language_conditioning: true
 
 # extra state encoder
 extra_state_encoder:
