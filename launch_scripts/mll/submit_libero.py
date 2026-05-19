@@ -183,7 +183,7 @@ def wandb_run_group(
     rep_loss_scale: float,
 ) -> str:
     """Wandb group for one (env, task, rep_loss_scale) sweep; seeds share this group."""
-    return f"{wandb_group}_{env_name}_task{task_id}_rep{rep_loss_scale:g}"
+    return f"{wandb_group}" #_{env_name}_task{task_id}_rep{rep_loss_scale:g}"
 
 
 def build_cardpol_sweep_config(
@@ -259,13 +259,13 @@ if __name__ == "__main__":
     ]
     config_names = [
         "transformer",
-        # "vilt",
+        "vilt",
         # "rnn",
-        # "mlp",
+        "mlp",
     ]
-    seeds = [0, 1, 2, 3]
-    task_ids = [2]
-    rep_loss_scales = [0.5, 0.1, 0.01, 0.001, 0.0]
+    seeds = [0, 1, 2,]
+    task_ids = [5,6,7]
+    rep_loss_scales = [0.01, 0.001, 0.0]
     train_ratio = 0.9
 
     sweep_configs = [

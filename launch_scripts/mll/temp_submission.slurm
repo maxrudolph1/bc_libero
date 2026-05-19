@@ -22,6 +22,7 @@ echo "SLURM_JOB_NODELIST=$SLURM_JOB_NODELIST"
 echo "Job started at $(date)"
 echo "Running on node: $(hostname)"
 
-python train_libero.py --config-path=libero_exp/configs/bc_cardpol_policy --config-name=transformer data.env_name=libero_spatial data.train_ratio=0.9 train.seed=3 train.mine_mi_loss_scale=0.1 train.mi_loss_scale=0.001 train.train_gpus=[0] train.rep_loss_scale=0.0 train.rep_classifier_hidden=256 data.dual_task.enable=true data.dual_task.focused_task_id=2 data.dual_task.future_step_min=1 data.dual_task.future_step_max=10 env.task_id=2 wandb.project=bc-cardpol-transformer wandb.group=cardpol_sweep_libero_spatial_task2_rep0
+python train_libero.py --config-path=libero_exp/configs/bc_cardpol_policy --config-name=transformer data.env_name=libero_spatial data.train_ratio=0.9 train.seed=4 train.mine_mi_loss_scale=0.1 train.mi_loss_scale=0.001 train.train_gpus=[0] train.rep_loss_scale=0.0 train.rep_classifier_hidden=256 data.dual_task.enable=true data.dual_task.focused_task_id=7 data.dual_task.future_step_min=1 data.dual_task.future_step_max=10 env.task_id=7 wandb.project=bc-cardpol-transformer wandb.group=cardpol_logging_05172026
+python train_libero.py --config-path=libero_exp/configs/bc_cardpol_policy --config-name=transformer data.env_name=libero_spatial data.train_ratio=0.9 train.seed=5 train.mine_mi_loss_scale=0.1 train.mi_loss_scale=0.001 train.train_gpus=[0] train.rep_loss_scale=0.0 train.rep_classifier_hidden=256 data.dual_task.enable=true data.dual_task.focused_task_id=7 data.dual_task.future_step_min=1 data.dual_task.future_step_max=10 env.task_id=7 wandb.project=bc-cardpol-transformer wandb.group=cardpol_logging_05172026
 
 echo "Job ended at $(date)"

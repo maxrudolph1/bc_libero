@@ -190,16 +190,19 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
         )
 
         val_datasets = [SequenceVLDataset(ds, emb) for (ds, emb) in zip(val_manip_datasets, task_embs)]
+        self.val_loader = self.build_val_loader(cfg, val_datasets)
+
+        return shape_meta
+
+    def build_val_loader(self, cfg, val_datasets):
         val_concat_dataset = ConcatDataset(val_datasets)
-        self.val_loader = DataLoader(
+        return DataLoader(
             val_concat_dataset,
             batch_size=cfg.eval.batch_size,
             num_workers=cfg.eval.num_workers,
             sampler=RandomSampler(val_concat_dataset),
             persistent_workers=True,
         )
-
-        return shape_meta
     
     def build_model(self, cfg, shape_meta):
         self.model = eval(cfg.policy.policy_type)(cfg, shape_meta)
@@ -380,6 +383,11 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
 
         return bc_loss
 
+    @torch.no_grad()
+    def compute_eval_batch_metrics(self, data):
+        loss = self.compute_loss(data, augmentation=False)
+        return {"loss": loss.item()}
+
     def after_epoch(self, train_metrics):
         cfg = self.cfg
         train_metrics["train/lr"] = self.optimizer.param_groups[0]["lr"]
@@ -432,11 +440,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
 
         print('Evaluating...')
         for data in tqdm(self.val_loader):
-            loss = self.compute_loss(data, augmentation=False)
-
-            ret_dict = {
-                "loss": loss.item(),
-            }
+            ret_dict = self.compute_eval_batch_metrics(data)
 
             for k, v in ret_dict.items():
                 if k not in tot_loss_dict:
