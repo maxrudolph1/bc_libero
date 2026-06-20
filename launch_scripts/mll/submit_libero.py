@@ -206,8 +206,6 @@ def build_cardpol_sweep_config(
         "data.env_name": env_name,
         "data.train_ratio": train_ratio,
         "train.seed": seeds,
-        "train.mine_mi_loss_scale": 0.1,
-        "train.mi_loss_scale": 1e-3,
         "train.train_gpus": "[0]",
         "train.rep_loss_scale": rep_loss_scale,
         "train.rep_classifier_hidden": 256,
@@ -255,8 +253,8 @@ if __name__ == "__main__":
     cli = parser.parse_args()
 
     libero_envs = [
-        "libero_spatial",
-        # "libero_object",
+        # "libero_spatial",
+        "libero_object",
         # "libero_goal",
         # "libero_10",
     ]
@@ -272,8 +270,9 @@ if __name__ == "__main__":
         # "mlp",
     ]
     seeds = [0, 1, 2,]
-    task_ids = [5,6,7]
-    rep_loss_scales = [0.01, 0.001, 0.0]
+    task_ids = [0,1,2,3,4,5,6,7,8,9]
+    rep_loss_scales = [ 0.001, 0.0]
+    # language_conditioning = [True, False]
     train_ratio = 0.9
 
     sweep_configs = [
