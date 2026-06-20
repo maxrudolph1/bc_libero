@@ -59,7 +59,8 @@ class ExtraModalityTokens(nn.Module):
             + int(use_ee) * ee_dim
         )
 
-        assert extra_low_level_feature_dim > 0, "[error] no extra information"
+        # extra_low_level_feature_dim == 0 is allowed: image(+language)-only baseline
+        # with no proprioceptive inputs. In that case this module contributes no tokens.
 
         self.extra_encoders = {}
 
@@ -115,6 +116,15 @@ class ExtraModalityTokens(nn.Module):
                         obs_dict[modality_name]
                     )
                 )
+
+        if len(tensor_list) == 0:
+            # No proprio modalities: contribute zero extra tokens, shape (B, T, 0, E).
+            ref = next(iter(obs_dict.values()))
+            B, T = ref.shape[:2]
+            return torch.zeros(
+                B, T, 0, self.extra_embedding_size,
+                device=ref.device, dtype=torch.float32,
+            )
 
         x = torch.stack(tensor_list, dim=-2)
         return x
