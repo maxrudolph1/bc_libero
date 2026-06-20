@@ -198,9 +198,11 @@ def build_cardpol_sweep_config(
     wandb_group: str,
     wandb_project: str = "bc-cardpol-transformer",
     use_language_conditioning: bool = True,
+    use_proprio: bool = True,
 ) -> Dict[str, Any]:
     """One sweep entry: fixed env / task / rep scale; seeds expanded via product."""
-    return {
+    group = wandb_run_group(wandb_group, env_name, task_id, rep_loss_scale)
+    config: Dict[str, Any] = {
         "--config-path": [policy_config_path(p) for p in policies],
         "--config-name": config_names,
         "data.env_name": env_name,
@@ -216,9 +218,20 @@ def build_cardpol_sweep_config(
         "policy.use_language_conditioning": str(use_language_conditioning).lower(),
         "env.task_id": [task_id],
         "wandb.project": wandb_project,
-        "wandb.group": wandb_run_group(wandb_group, env_name, task_id, rep_loss_scale),
+        "wandb.group": group if use_proprio else f"{group}_noproprio",
         "wandb.policy_arch": config_names,
     }
+
+    if not use_proprio:
+        # Drop proprioceptive state from the dataset and the policy inputs so the
+        # baseline is image (+ language) only.
+        config["data.data_modality"] = "[image]"
+        config["data.obs.modality.low_dim"] = "[]"
+        config["data.use_gripper"] = "false"
+        config["data.use_joint"] = "false"
+        config["data.use_ee"] = "false"
+
+    return config
 
 
 if __name__ == "__main__":
@@ -230,7 +243,7 @@ if __name__ == "__main__":
     parser.add_argument("--gpus", type=int, default=1)
     parser.add_argument("--cpus", type=int, default=16)
     parser.add_argument("--mem", type=str, default="128GB")
-    parser.add_argument("--time", dest="time_limit", type=str, default="8:00:00")
+    parser.add_argument("--time", dest="time_limit", type=str, default="24:00:00")
     parser.add_argument(
         "--wandb-group",
         "--group",
@@ -249,6 +262,16 @@ if __name__ == "__main__":
         "--no-policy-language",
         action="store_true",
         help="Disable language conditioning in the BC policy (task_emb still in batches for CARDPol).",
+    )
+    parser.add_argument(
+        "--include-no-proprio",
+        action="store_true",
+        help="Also sweep a no-proprio baseline (image/language only) alongside the proprio runs.",
+    )
+    parser.add_argument(
+        "--no-proprio-only",
+        action="store_true",
+        help="Only run the no-proprio baseline (image/language only); skip the proprio runs.",
     )
     cli = parser.parse_args()
 
@@ -275,6 +298,13 @@ if __name__ == "__main__":
     # language_conditioning = [True, False]
     train_ratio = 0.9
 
+    if cli.no_proprio_only:
+        proprio_settings = [False]
+    elif cli.include_no_proprio:
+        proprio_settings = [True, False]
+    else:
+        proprio_settings = [True]
+
     sweep_configs = [
         build_cardpol_sweep_config(
             env_name=env_name,
@@ -287,10 +317,12 @@ if __name__ == "__main__":
             wandb_group=cli.wandb_group,
             wandb_project=cli.wandb_project,
             use_language_conditioning=not cli.no_policy_language,
+            use_proprio=use_proprio,
         )
         for env_name in libero_envs
         for task_id in task_ids
         for rep_loss_scale in rep_loss_scales
+        for use_proprio in proprio_settings
     ]
 
     main(
