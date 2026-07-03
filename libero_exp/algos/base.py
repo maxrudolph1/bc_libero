@@ -12,6 +12,7 @@ from torch.utils.data import ConcatDataset, DataLoader, RandomSampler
 import logging
 from tqdm import tqdm
 from lightning.fabric import Fabric
+from lightning.fabric.strategies import DDPStrategy
 from libero.libero.benchmark import get_benchmark
 from libero.lifelong.datasets import SequenceVLDataset
 
@@ -95,7 +96,14 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
         else:   # train
             shape_meta = self.build_dataloader(cfg)
             self.device = cfg.train.device
-            self.fabric = Fabric(accelerator="cuda", devices=list(cfg.train.train_gpus), precision="bf16-mixed" if cfg.train.mix_precision else None, strategy="ddp")
+            # When language conditioning is disabled, the ResNet FiLM projections and the
+            # language encoder never participate in the loss. DDP then needs static_graph=True
+            # to (a) tolerate those unused parameters and (b) allow CARDPol's reuse of params
+            # across its multiple forward / spatial_encode calls per step. (find_unused_parameters
+            # handles (a) but breaks on (b) with a "marked ready twice" error.)
+            use_language = cfg.policy.get("use_language_conditioning", True)
+            ddp_strategy = DDPStrategy(static_graph=True) if not use_language else "ddp"
+            self.fabric = Fabric(accelerator="cuda", devices=list(cfg.train.train_gpus), precision="bf16-mixed" if cfg.train.mix_precision else None, strategy=ddp_strategy)
             self.fabric.launch()
             self.build_model(cfg, shape_meta)
 

@@ -176,6 +176,28 @@ def policy_config_path(policy_name: str) -> str:
     return f"libero_exp/configs/{policy_name}"
 
 
+VALID_MODALITIES = ("image", "proprio", "language")
+_MODALITY_SHORT = {"image": "img", "proprio": "proprio", "language": "lang"}
+
+
+def parse_modality_set(spec: str) -> List[str]:
+    """Parse 'image,proprio,language' into a canonical, deduped modality list."""
+    mods = [m.strip().lower() for m in spec.split(",") if m.strip()]
+    invalid = [m for m in mods if m not in VALID_MODALITIES]
+    if invalid:
+        raise ValueError(
+            f"Unknown modalit(ies) {invalid}; valid options are {list(VALID_MODALITIES)}."
+        )
+    if "image" not in mods:
+        raise ValueError("'image' must be included in every modality set.")
+    return [m for m in VALID_MODALITIES if m in mods]
+
+
+def modality_tag(modalities: List[str]) -> str:
+    """Short wandb-friendly tag, e.g. 'img', 'img+proprio', 'img+proprio+lang'."""
+    return "+".join(_MODALITY_SHORT[m] for m in modalities)
+
+
 def wandb_run_group(
     wandb_group: str,
     env_name: str,
@@ -197,10 +219,17 @@ def build_cardpol_sweep_config(
     train_ratio: float,
     wandb_group: str,
     wandb_project: str = "bc-cardpol-transformer",
-    use_language_conditioning: bool = True,
-    use_proprio: bool = True,
+    modalities: List[str] = ("image", "proprio", "language"),
 ) -> Dict[str, Any]:
-    """One sweep entry: fixed env / task / rep scale; seeds expanded via product."""
+    """One sweep entry: fixed env / task / rep scale; seeds expanded via product.
+
+    `modalities` selects which inputs to include. 'image' is always required;
+    'proprio' adds proprioceptive state, 'language' enables language conditioning.
+    """
+    modalities = list(modalities)
+    use_proprio = "proprio" in modalities
+    use_language = "language" in modalities
+
     group = wandb_run_group(wandb_group, env_name, task_id, rep_loss_scale)
     config: Dict[str, Any] = {
         "--config-path": [policy_config_path(p) for p in policies],
@@ -215,17 +244,19 @@ def build_cardpol_sweep_config(
         "data.dual_task.focused_task_id": task_id,
         "data.dual_task.future_step_min": 1,
         "data.dual_task.future_step_max": 10,
-        "policy.use_language_conditioning": str(use_language_conditioning).lower(),
+        "policy.use_language_conditioning": str(use_language).lower(),
         "env.task_id": [task_id],
         "wandb.project": wandb_project,
-        "wandb.group": group if use_proprio else f"{group}_noproprio",
+        "wandb.group": f"{group}_{modality_tag(modalities)}",
         "wandb.policy_arch": config_names,
     }
 
+    # data_modality reflects the observation inputs (image always; proprio optional).
+    data_modalities = [m for m in ("image", "proprio") if m in modalities]
+    config["data.data_modality"] = "[" + ",".join(data_modalities) + "]"
+
     if not use_proprio:
-        # Drop proprioceptive state from the dataset and the policy inputs so the
-        # baseline is image (+ language) only.
-        config["data.data_modality"] = "[image]"
+        # Drop proprioceptive state from the dataset and the policy inputs.
         config["data.obs.modality.low_dim"] = "[]"
         config["data.use_gripper"] = "false"
         config["data.use_joint"] = "false"
@@ -259,19 +290,15 @@ if __name__ == "__main__":
         help="Wandb project name passed to Hydra as wandb.project.",
     )
     parser.add_argument(
-        "--no-policy-language",
-        action="store_true",
-        help="Disable language conditioning in the BC policy (task_emb still in batches for CARDPol).",
-    )
-    parser.add_argument(
-        "--include-no-proprio",
-        action="store_true",
-        help="Also sweep a no-proprio baseline (image/language only) alongside the proprio runs.",
-    )
-    parser.add_argument(
-        "--no-proprio-only",
-        action="store_true",
-        help="Only run the no-proprio baseline (image/language only); skip the proprio runs.",
+        "--modalities",
+        action="append",
+        dest="modality_sets",
+        metavar="image[,proprio][,language]",
+        help=(
+            "Comma-separated modalities to INCLUDE (e.g. 'image,proprio,language'). "
+            "'image' is required. Repeat the flag to sweep multiple modality sets. "
+            "If omitted, the modality_sets list defined in __main__ is used."
+        ),
     )
     cli = parser.parse_args()
 
@@ -292,18 +319,25 @@ if __name__ == "__main__":
         # "rnn",
         # "mlp",
     ]
-    seeds = [0, 1, 2,]
-    task_ids = [0,1,2,3,4,5,6,7,8,9]
-    rep_loss_scales = [ 0.001, 0.0]
-    # language_conditioning = [True, False]
+    
+    seeds = [0, 1, 2, 3, 4]
+    task_ids = [0,1,2,3,]
+    rep_loss_scales = [ 1.0, 0.1, 0.01 ]
     train_ratio = 0.9
 
-    if cli.no_proprio_only:
-        proprio_settings = [False]
-    elif cli.include_no_proprio:
-        proprio_settings = [True, False]
+    # Which input modalities to INCLUDE. 'image' is always required; add 'proprio'
+    # and/or 'language'. Each entry is one run config; list multiple to sweep them.
+    modality_sets = [
+        ["image"],                            # vision only (no proprio, no language)
+        # ["image", "proprio"],               # vision + proprio
+        # ["image", "proprio", "language"],   # full (default LIBERO setup)
+    ]
+
+    # CLI --modalities (repeatable) overrides the list above.
+    if cli.modality_sets:
+        modality_sets = [parse_modality_set(spec) for spec in cli.modality_sets]
     else:
-        proprio_settings = [True]
+        modality_sets = [parse_modality_set(",".join(m)) for m in modality_sets]
 
     sweep_configs = [
         build_cardpol_sweep_config(
@@ -316,13 +350,12 @@ if __name__ == "__main__":
             train_ratio=train_ratio,
             wandb_group=cli.wandb_group,
             wandb_project=cli.wandb_project,
-            use_language_conditioning=not cli.no_policy_language,
-            use_proprio=use_proprio,
+            modalities=modalities,
         )
         for env_name in libero_envs
         for task_id in task_ids
         for rep_loss_scale in rep_loss_scales
-        for use_proprio in proprio_settings
+        for modalities in modality_sets
     ]
 
     main(
