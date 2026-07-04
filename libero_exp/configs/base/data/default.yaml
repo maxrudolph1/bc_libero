@@ -23,6 +23,15 @@ obs:
     low_dim: ["gripper_states", "joint_states"]
 img_size: 128
 
+# real-world video distractor appended to agentview at eval time (and in datasets_distract)
+distractor:
+  enable: false
+  frames_dir: "/u/mrudolph/documents/BC-IB/epickitchens/P01/rgb_frames/p01_01"
+  global_seed: 0
+  layout: hconcat_right
+  temporal: one_frame_per_step
+  sample_start: random_per_episode
+
 # mapping from obs.modality keys to robosuite environment observation keys
 obs_key_mapping:
   agentview_rgb: agentview_image

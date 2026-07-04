@@ -24,6 +24,7 @@ from ..data.get_dataset import (
 )
 from ..models import BCRNNPolicy, BCTransformerPolicy, BCViLTPolicy, BCMLPPolicy, BCDPPolicy
 from ..utils.data_utils import get_task_embs
+from ..utils.distractor_utils import validate_distractor_shape_meta
 from ..utils.env_utils import build_env
 from ..utils.train_utils import setup_optimizer, setup_lr_scheduler
 from ..utils.video_utils import VideoWriter
@@ -213,6 +214,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
         )
     
     def build_model(self, cfg, shape_meta):
+        validate_distractor_shape_meta(cfg, shape_meta)
         self.model = eval(cfg.policy.policy_type)(cfg, shape_meta)
         self.optimizer = setup_optimizer(cfg.train.optimizer, self.model)
         self.scheduler = setup_lr_scheduler(self.optimizer, cfg.train.scheduler)
@@ -549,6 +551,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
         benchmark = get_benchmark(cfg.data.env_name)(cfg.data.task_order_index)
         shape_meta = get_dataset(dataset_path=os.path.join(cfg.data.root_dir, benchmark.get_task_demonstration(0)),
                                 obs_modality=cfg.data.obs.modality, return_shape_meta=True)
+        validate_distractor_shape_meta(cfg, shape_meta)
         model = eval(cfg.policy.policy_type)(cfg, shape_meta)
         _ = model.load(checkpoint)
 

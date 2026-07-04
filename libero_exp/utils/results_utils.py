@@ -8,6 +8,7 @@ from typing import List
 from einops import rearrange
 
 from .data_utils import raw_obs_to_tensor_obs
+from .distractor_utils import DistractorAugmentor, distractor_enabled
 from .video_utils import video_pad_time, rearrange_videos, render_done_to_boundary
 
 
@@ -56,6 +57,23 @@ def rollout(cfg, env_dict, policy, num_env_rollouts, horizon=None, return_wandb_
 
             obs = env.set_init_state(init_states)
 
+            augmentor = None
+            if distractor_enabled(cfg):
+                augmentor = DistractorAugmentor(cfg.data.distractor.frames_dir)
+                env_name = (
+                    cfg.env.env_name[env_idx]
+                    if isinstance(cfg.env.env_name, list)
+                    else cfg.env.env_name
+                )
+                augmentor.reset(
+                    env_num=cfg.env.env_num,
+                    global_seed=cfg.data.distractor.global_seed,
+                    env_name=env_name,
+                    task_idx=task_idx,
+                    rollout_idx=num_env_rollout,
+                    max_horizon=horizon,
+                )
+
             # simulate the physics without any actions
             # action_dim = cfg.policy.policy_head.network_kwargs.output_size
             # dummy_actions = np.zeros((cfg.env.env_num, action_dim))
@@ -67,9 +85,13 @@ def rollout(cfg, env_dict, policy, num_env_rollouts, horizon=None, return_wandb_
             episode_frames = []
             
             for step_i in tqdm(range(horizon)):
+                if augmentor is not None:
+                    augmentor.apply_to_obs(obs, obs_key="agentview_image", advance=True)
                 data = raw_obs_to_tensor_obs(obs, task_emb, cfg, device)
                 a = policy.get_action(cfg, data)
                 obs, r, done, info = env.step(a)
+                if augmentor is not None:
+                    augmentor.apply_to_obs(obs, obs_key="agentview_image", advance=False)
 
                 video_img = []
                 for k in range(cfg.env.env_num):
