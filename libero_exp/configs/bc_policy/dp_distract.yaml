@@ -1,0 +1,21 @@
+defaults:
+  - dp
+  - override ../base/data@data: distract
+  - _self_
+
+eval:
+  post_train_rollout:
+    enable: true
+    eval_all: false
+    log_video: true
+
+hydra:
+  run:
+    dir: ./outputs/libero/${algo.algo_name}/dp_distract/${data.env_name}/ratio${data.train_ratio}/${now:%m%d}_${now:%H%M}_seed${train.seed}
+  sweep:
+    dir: ./outputs/libero/${algo.algo_name}/dp_distract/${data.env_name}/ratio${data.train_ratio}/${now:%m%d}_${now:%H%M}_seed${train.seed}
+    subdir: ${hydra.job.num}
+
+wandb:
+  group: ${data.env_name}_${algo.algo_name}_dp_distract
+  dir: ./wandb/${env.env_type}/${algo.algo_name}/dp_distract/${data.env_name}/ratio${data.train_ratio}

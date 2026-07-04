@@ -6,9 +6,15 @@ batch_size: 64
 num_workers: 4
 eval_every: ${train.epoch_log_freq}
 
-# rollout
+# rollout during training (uses data.distractor when enabled)
 enable_rollout: true
-eval_all: false   # if false, only evaluate on final checkpoint
+eval_all: false   # if false, only evaluate on final checkpoint (standalone eval_libero.py)
+
+# rollout after training completes, logged to the same wandb run before finish()
+post_train_rollout:
+  enable: false
+  eval_all: false   # if true, evaluate every model_*.ckpt in experiment_dir
+  log_video: true
 
 # other
 use_mp: true

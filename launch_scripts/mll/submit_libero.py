@@ -20,12 +20,14 @@ from typing import Any, Dict, Iterator, List, Optional
 REPO_ROOT = Path("/u/mrudolph/documents/BC-IB")
 SLURM_TEMP_SCRIPT = REPO_ROOT / "launch_scripts/mll/temp_submission.slurm"
 SLURM_LOG_ROOT = REPO_ROOT / "slurm_jobs/libero"
+DEFAULT_SLURM_EXCLUDE = "slurm-node-[008-011]"
 
 SLURM_TEMPLATE = """#!/bin/bash
 #SBATCH --job-name={job_name}
 #SBATCH --output={log_root}/job_%j/job_%j.out
 #SBATCH --error={log_root}/job_%j/job_%j.err
 #SBATCH --partition={partition}
+#SBATCH --exclude={exclude}
 #SBATCH --gres=gpu:{gpus}
 #SBATCH --cpus-per-task={cpus}
 #SBATCH --mem={mem}
@@ -88,6 +90,7 @@ def submit_slurm_job(
     dry_run: bool,
     job_name: str = "libero-train",
     partition: str = "allnodes",
+    exclude: str = DEFAULT_SLURM_EXCLUDE,
     gpus: int = 1,
     cpus: int = 16,
     mem: str = "768GB",
@@ -97,6 +100,7 @@ def submit_slurm_job(
         job_name=job_name,
         log_root=SLURM_LOG_ROOT,
         partition=partition,
+        exclude=exclude,
         gpus=gpus,
         cpus=cpus,
         mem=mem,
@@ -142,6 +146,7 @@ def main(
     num_runs_per_job: int = 1,
     job_name: str = "libero-train",
     partition: str = "allnodes",
+    exclude: str = DEFAULT_SLURM_EXCLUDE,
     gpus: int = 1,
     cpus: int = 16,
     mem: str = "768GB",
@@ -163,6 +168,7 @@ def main(
             dry_run=dry_run,
             job_name=job_name,
             partition=partition,
+            exclude=exclude,
             gpus=gpus,
             cpus=cpus,
             mem=mem,
@@ -271,6 +277,12 @@ if __name__ == "__main__":
     parser.add_argument("--num-runs-per-job", type=int, default=1, help="Sequential runs per Slurm job.")
     parser.add_argument("--job-name", type=str, default="libero-train")
     parser.add_argument("--partition", type=str, default="allnodes")
+    parser.add_argument(
+        "--exclude",
+        type=str,
+        default=DEFAULT_SLURM_EXCLUDE,
+        help="Slurm --exclude node list (default: %(default)s).",
+    )
     parser.add_argument("--gpus", type=int, default=1)
     parser.add_argument("--cpus", type=int, default=16)
     parser.add_argument("--mem", type=str, default="128GB")
@@ -364,6 +376,7 @@ if __name__ == "__main__":
         num_runs_per_job=cli.num_runs_per_job,
         job_name=cli.job_name,
         partition=cli.partition,
+        exclude=cli.exclude,
         gpus=cli.gpus,
         cpus=cli.cpus,
         mem=cli.mem,

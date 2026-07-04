@@ -1,5 +1,6 @@
 import os
 import gc
+import glob
 import math
 import time
 import datetime
@@ -108,7 +109,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
             self.fabric.launch()
             self.build_model(cfg, shape_meta)
 
-            if cfg.eval.enable_rollout:
+            if cfg.eval.enable_rollout or cfg.eval.post_train_rollout.enable:
                 cfg.env.env_num, cfg.env.num_env_rollouts = 10, 10
                 cfg.env.render_gpu_ids = cfg.env.render_gpu_ids[self.fabric.global_rank] if isinstance(cfg.env.render_gpu_ids, list) else cfg.env.render_gpu_ids
                 cfg.env.env_name = [cfg.env.env_name]
@@ -438,6 +439,12 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
         cfg = self.cfg
         if self.fabric.is_global_zero:
             self.model.save(f"{cfg.experiment_dir}/model_final.ckpt", self.epoch, self.optimizer, self.scheduler)
+        self.fabric.barrier()
+
+        if cfg.eval.post_train_rollout.enable:
+            self.post_train_rollout_tasks()
+
+        if self.fabric.is_global_zero:
             if self._wandb_enabled() and wandb.run is not None:
                 print(f"finished training in {wandb.run.dir}")
                 wandb.finish()
@@ -467,6 +474,60 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
 
         return out_dict
 
+    def _get_eval_checkpoint_paths(self, eval_all: bool):
+        exp_dir = self.cfg.experiment_dir
+        final_ckpt = os.path.join(exp_dir, "model_final.ckpt")
+        if not eval_all:
+            return [final_ckpt]
+
+        ckpts = sorted(glob.glob(os.path.join(exp_dir, "model_*.ckpt")))
+        return ckpts if ckpts else [final_ckpt]
+
+    @staticmethod
+    def _prefix_rollout_metrics(results: dict, prefix: str) -> dict:
+        prefixed = {}
+        for key, value in results.items():
+            if key.startswith("rollout/"):
+                prefixed[f"{prefix}/{key[len('rollout/'):]}"] = value
+            else:
+                prefixed[f"{prefix}/{key}"] = value
+        return prefixed
+
+    def _log_rollout_results(self, results, *, log_video, wandb_step, metric_prefix="rollout"):
+        gathered_results = [{} for _ in range(self.fabric.world_size)]
+        dist.all_gather_object(gathered_results, results)
+        if self.fabric.is_global_zero:
+            gathered_results = merge_results(gathered_results)
+            wandb_step = self.global_step if wandb_step is None else wandb_step
+            if metric_prefix != "rollout":
+                gathered_results = self._prefix_rollout_metrics(gathered_results, metric_prefix)
+
+            if metric_prefix == "rollout":
+                vis_prefix = "rollout/vis_"
+                scalar_metrics = {
+                    k: v
+                    for k, v in gathered_results.items()
+                    if not k.startswith(vis_prefix)
+                }
+                video_metrics = {
+                    k: v for k, v in gathered_results.items() if k.startswith(vis_prefix)
+                }
+            else:
+                scalar_metrics = {
+                    k: v for k, v in gathered_results.items() if "/vis_" not in k
+                }
+                video_metrics = {
+                    k: v for k, v in gathered_results.items() if "/vis_" in k
+                }
+
+            wandb_metrics = dict(scalar_metrics)
+            if log_video:
+                wandb_metrics.update(video_metrics)
+            self._log_wandb(wandb_metrics, step=wandb_step)
+            self.metric_logger.update(**scalar_metrics)
+
+        self.fabric.barrier()
+
     def rollout_tasks(self, log_video=False, wandb_step=None):
         cfg = self.cfg
         if not cfg.eval.enable_rollout:
@@ -484,32 +545,52 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
             return_wandb_video=log_video and self._wandb_enabled(),
         )
 
-        self.fabric.barrier()
-        gathered_results = [{} for _ in range(self.fabric.world_size)]
-        dist.all_gather_object(gathered_results, results)
-        if self.fabric.is_global_zero:
-            gathered_results = merge_results(gathered_results)
-            # Use global_step (not epoch): training logs advance global_step each batch,
-            # and wandb ignores logs with step < the current step.
-            wandb_step = self.global_step if wandb_step is None else wandb_step
-            scalar_metrics = {
-                k: v
-                for k, v in gathered_results.items()
-                if not k.startswith("rollout/vis_")
-            }
-            wandb_metrics = dict(scalar_metrics)
-            if log_video:
-                wandb_metrics.update(
-                    {
-                        k: v
-                        for k, v in gathered_results.items()
-                        if k.startswith("rollout/vis_")
-                    }
-                )
-            self._log_wandb(wandb_metrics, step=wandb_step)
-            self.metric_logger.update(**scalar_metrics)
+        self._log_rollout_results(
+            results,
+            log_video=log_video,
+            wandb_step=wandb_step,
+            metric_prefix="rollout",
+        )
 
-        self.fabric.barrier()
+    def post_train_rollout_tasks(self):
+        cfg = self.cfg
+        if not cfg.eval.post_train_rollout.enable:
+            return
+
+        if not hasattr(self, "rollout_env"):
+            raise RuntimeError(
+                "post_train_rollout requires rollout env; set eval.enable_rollout=true "
+                "or keep eval.post_train_rollout.enable=true during init."
+            )
+
+        if cfg.train.debug:
+            cfg.env.horizon = 10
+
+        ckpt_paths = self._get_eval_checkpoint_paths(cfg.eval.post_train_rollout.eval_all)
+        log_video = cfg.eval.post_train_rollout.log_video and self._wandb_enabled()
+
+        for ckpt_idx, ckpt_path in enumerate(ckpt_paths):
+            ckpt_tag = os.path.basename(ckpt_path).replace(".ckpt", "")
+            if self.fabric.is_global_zero:
+                print(f"\nPost-train rollout on {ckpt_path}...")
+            self.model.load(ckpt_path, self.optimizer, self.scheduler)
+
+            results = rollout(
+                cfg,
+                self.rollout_env,
+                self.model,
+                cfg.env.num_env_rollouts // cfg.env.env_num,
+                horizon=cfg.env.horizon,
+                return_wandb_video=log_video,
+            )
+
+            metric_prefix = f"post_train/{ckpt_tag}"
+            self._log_rollout_results(
+                results,
+                log_video=log_video,
+                wandb_step=self.global_step + ckpt_idx + 1,
+                metric_prefix=metric_prefix,
+            )
 
     def reset(self):
         self.policy.reset()

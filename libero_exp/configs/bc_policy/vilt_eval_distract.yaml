@@ -1,8 +1,4 @@
 defaults:
   - vilt_eval
+  - override ../base/data@data: distract
   - _self_
-
-data:
-  root_dir: "/datastor2/mrudolph/LIBERO/datasets_distract"
-  distractor:
-    enable: true

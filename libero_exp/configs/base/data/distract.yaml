@@ -1,0 +1,7 @@
+defaults:
+  - default
+
+root_dir: "/datastor2/mrudolph/LIBERO/datasets_distract"
+
+distractor:
+  enable: true
