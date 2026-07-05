@@ -155,7 +155,7 @@ class BCViLTPolicy(BasePolicy):
 
         ### 8. reshape transform for attention visualization
         self.reshape_transform = lambda x: reshape_transform(
-            x, self.encoders[0].h, self.encoders[1].w
+            x, self.encoders[0].h, self.encoders[-1].w
         )
 
     def spatial_encode(self, data):

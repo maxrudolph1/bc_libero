@@ -176,3 +176,23 @@ class DataAugGroup(nn.Module):
         else:
             out = x_groups
         return out
+
+
+class PerImageDataAugGroup(nn.Module):
+    """
+    Apply augmentation to multiple image inputs independently.
+
+    Unlike ``DataAugGroup``, the image groups are never concatenated with each
+    other, so they may have different spatial resolutions (e.g. a
+    distractor-widened agentview alongside a square eye-in-hand view). Each
+    group is augmented by its own aug stack, in the same order as the inputs.
+    """
+
+    def __init__(self, aug_groups):
+        super().__init__()
+        self.aug_layers = nn.ModuleList(aug_groups)
+
+    def forward(self, x_groups):
+        if not self.training:
+            return tuple(x_groups)
+        return tuple(layer(x) for layer, x in zip(self.aug_layers, x_groups))

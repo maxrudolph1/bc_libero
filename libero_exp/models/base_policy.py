@@ -9,6 +9,7 @@ from .modules.data_augmentation import (
     ImgColorJitterGroupAug,
     BatchWiseImgColorJitterAug,
     DataAugGroup,
+    PerImageDataAugGroup,
 )
 
 REGISTERED_POLICIES = {}
@@ -59,18 +60,29 @@ class BasePolicy(nn.Module, metaclass=PolicyMeta):
 
         policy_cfg = cfg.policy
 
-        # add data augmentation for rgb inputs
-        color_aug = eval(policy_cfg.color_aug.network)(
-            **policy_cfg.color_aug.network_kwargs
-        )
-
-        policy_cfg.translation_aug.network_kwargs["input_shape"] = shape_meta[
-            "all_shapes"
-        ][cfg.data.obs.modality.rgb[0]]
-        translation_aug = eval(policy_cfg.translation_aug.network)(
-            **policy_cfg.translation_aug.network_kwargs
-        )
-        self.img_aug = DataAugGroup((color_aug, translation_aug))
+        # Add data augmentation for rgb inputs. Build a separate augmentation
+        # stack per image group (matching the order in which image encoders are
+        # created from shape_meta) so cameras of different resolutions -- e.g. a
+        # distractor-widened agentview (128x256) alongside a square eye-in-hand
+        # view (128x128) -- are augmented independently rather than being
+        # concatenated together (which requires identical spatial dims).
+        rgb_keys = [
+            name
+            for name in shape_meta["all_shapes"].keys()
+            if "rgb" in name or "depth" in name
+        ]
+        aug_groups = []
+        for name in rgb_keys:
+            color_aug = eval(policy_cfg.color_aug.network)(
+                **policy_cfg.color_aug.network_kwargs
+            )
+            translation_kwargs = dict(policy_cfg.translation_aug.network_kwargs)
+            translation_kwargs["input_shape"] = shape_meta["all_shapes"][name]
+            translation_aug = eval(policy_cfg.translation_aug.network)(
+                **translation_kwargs
+            )
+            aug_groups.append(nn.Sequential(color_aug, translation_aug))
+        self.img_aug = PerImageDataAugGroup(aug_groups)
 
     def use_language_conditioning(self):
         """Whether the BC policy uses task language (token + image FiLM)."""

@@ -185,6 +185,46 @@ def policy_config_path(policy_name: str) -> str:
 VALID_MODALITIES = ("image", "proprio", "language")
 _MODALITY_SHORT = {"image": "img", "proprio": "proprio", "language": "lang"}
 
+# Camera views usable as image inputs. Each maps to a `data.obs.modality.rgb`
+# key (and the corresponding `obs_key_mapping` entry used at rollout time).
+VALID_CAMERAS = ("agentview", "eye_in_hand")
+_CAMERA_RGB_KEY = {"agentview": "agentview_rgb", "eye_in_hand": "eye_in_hand_rgb"}
+_CAMERA_SHORT = {"agentview": "agent", "eye_in_hand": "wrist"}
+_CAMERA_ALIASES = {
+    "agentview": "agentview",
+    "agent": "agentview",
+    "third": "agentview",
+    "third_person": "agentview",
+    "eye_in_hand": "eye_in_hand",
+    "eye-in-hand": "eye_in_hand",
+    "eih": "eye_in_hand",
+    "wrist": "eye_in_hand",
+    "hand": "eye_in_hand",
+}
+# Default camera set: third-person agentview only (no wrist / eye-in-hand view).
+DEFAULT_CAMERAS = ["agentview"]
+
+
+def parse_camera_set(spec: str) -> List[str]:
+    """Parse 'agentview,wrist' into a canonical, deduped camera list."""
+    raw = [c.strip().lower() for c in spec.split(",") if c.strip()]
+    cams: List[str] = []
+    for c in raw:
+        if c not in _CAMERA_ALIASES:
+            raise ValueError(
+                f"Unknown camera '{c}'; valid options are {list(VALID_CAMERAS)} "
+                "(aliases: agent, wrist, eih)."
+            )
+        cams.append(_CAMERA_ALIASES[c])
+    if not cams:
+        raise ValueError("At least one camera must be selected.")
+    return [c for c in VALID_CAMERAS if c in cams]
+
+
+def camera_tag(cameras: List[str]) -> str:
+    """Short wandb-friendly tag, e.g. 'agent', 'agent+wrist'."""
+    return "+".join(_CAMERA_SHORT[c] for c in cameras)
+
 
 def parse_modality_set(spec: str) -> List[str]:
     """Parse 'image,proprio,language' into a canonical, deduped modality list."""
@@ -226,6 +266,7 @@ def build_cardpol_sweep_config(
     wandb_group: str,
     wandb_project: str = "bc-cardpol-transformer",
     modalities: List[str] = ("image", "proprio", "language"),
+    cameras: List[str] = ("agentview",),
     distract: bool = False,
     enable_rollout_during_train: bool = True,
     post_train_rollout: bool = True,
@@ -234,9 +275,12 @@ def build_cardpol_sweep_config(
 
     `modalities` selects which inputs to include. 'image' is always required;
     'proprio' adds proprioceptive state, 'language' enables language conditioning.
+    `cameras` selects which image views feed the policy (agentview and/or the
+    eye-in-hand wrist camera); it sets ``data.obs.modality.rgb``.
     When ``distract=True``, uses ``<backbone>_distract`` configs (datasets_distract).
     """
     modalities = list(modalities)
+    cameras = list(cameras)
     use_proprio = "proprio" in modalities
     use_language = "language" in modalities
 
@@ -246,7 +290,7 @@ def build_cardpol_sweep_config(
     ]
 
     group = wandb_run_group(wandb_group, env_name, task_id, rep_loss_scale)
-    group_suffix = f"_{modality_tag(modalities)}"
+    group_suffix = f"_{modality_tag(modalities)}_cam-{camera_tag(cameras)}"
     if distract:
         group_suffix += "_distract"
 
@@ -274,6 +318,10 @@ def build_cardpol_sweep_config(
         config["eval.enable_rollout"] = str(enable_rollout_during_train).lower()
         config["eval.post_train_rollout.enable"] = str(post_train_rollout).lower()
 
+    # Select which camera views feed the policy image encoders.
+    rgb_keys = [_CAMERA_RGB_KEY[c] for c in cameras]
+    config["data.obs.modality.rgb"] = "[" + ",".join(rgb_keys) + "]"
+
     # data_modality reflects the observation inputs (image always; proprio optional).
     data_modalities = [m for m in ("image", "proprio") if m in modalities]
     config["data.data_modality"] = "[" + ",".join(data_modalities) + "]"
@@ -297,13 +345,16 @@ def build_bc_distract_sweep_config(
     train_ratio: float,
     wandb_group: str,
     wandb_project: str,
+    cameras: List[str] = ("agentview",),
     enable_rollout_during_train: bool = True,
     post_train_rollout: bool = True,
 ) -> Dict[str, Any]:
     """Hydra sweep entry for bc_policy / bc_ib_policy on distracted datasets."""
+    cameras = list(cameras)
     distract_config = (
         config_name if config_name.endswith("_distract") else f"{config_name}_distract"
     )
+    rgb_keys = [_CAMERA_RGB_KEY[c] for c in cameras]
     return {
         "--config-path": policy_config_path(policy),
         "--config-name": distract_config,
@@ -311,10 +362,11 @@ def build_bc_distract_sweep_config(
         "data.train_ratio": train_ratio,
         "train.seed": seeds,
         "train.train_gpus": "[0]",
+        "data.obs.modality.rgb": "[" + ",".join(rgb_keys) + "]",
         "eval.enable_rollout": str(enable_rollout_during_train).lower(),
         "eval.post_train_rollout.enable": str(post_train_rollout).lower(),
         "wandb.project": wandb_project,
-        "wandb.group": f"{wandb_group}_{env_name}_{distract_config}",
+        "wandb.group": f"{wandb_group}_{env_name}_{distract_config}_cam-{camera_tag(cameras)}",
         "wandb.policy_arch": distract_config,
     }
 
@@ -358,6 +410,17 @@ if __name__ == "__main__":
             "Comma-separated modalities to INCLUDE (e.g. 'image,proprio,language'). "
             "'image' is required. Repeat the flag to sweep multiple modality sets. "
             "If omitted, the modality_sets list defined in __main__ is used."
+        ),
+    )
+    parser.add_argument(
+        "--cameras",
+        type=str,
+        default=None,
+        metavar="agentview[,wrist]",
+        help=(
+            "Comma-separated camera views to use as image inputs "
+            "(options: agentview, wrist/eye_in_hand; aliases: agent, eih). "
+            "Sets data.obs.modality.rgb. Default: agentview only (no wrist camera)."
         ),
     )
     parser.add_argument(
@@ -419,6 +482,14 @@ if __name__ == "__main__":
     else:
         modality_sets = [parse_modality_set(",".join(m)) for m in modality_sets]
 
+    cameras = parse_camera_set(cli.cameras) if cli.cameras else list(DEFAULT_CAMERAS)
+    if cli.distract and "agentview" not in cameras:
+        parser.error(
+            "--distract requires the 'agentview' camera: the distractor is baked "
+            "into agentview_rgb (datasets_distract) and applied to agentview at "
+            "rollout, and the shape check expects agentview_rgb=(3,128,256)."
+        )
+
     if cli.distract and cli.policy in ("bc_policy", "bc_ib_policy"):
         sweep_configs = [
             build_bc_distract_sweep_config(
@@ -429,6 +500,7 @@ if __name__ == "__main__":
                 train_ratio=train_ratio,
                 wandb_group=cli.wandb_group,
                 wandb_project=cli.wandb_project,
+                cameras=cameras,
             )
             for env_name in libero_envs
         ]
@@ -445,6 +517,7 @@ if __name__ == "__main__":
                 wandb_group=cli.wandb_group,
                 wandb_project=cli.wandb_project,
                 modalities=modalities,
+                cameras=cameras,
                 distract=cli.distract,
             )
             for env_name in libero_envs
