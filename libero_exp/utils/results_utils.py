@@ -73,6 +73,10 @@ def rollout(cfg, env_dict, policy, num_env_rollouts, horizon=None, return_wandb_
                     rollout_idx=num_env_rollout,
                     max_horizon=horizon,
                 )
+                # Augment the initial obs once, before the first action. Each raw
+                # obs must be augmented exactly once: apply_to_obs mutates obs in
+                # place (horizontal concat), so applying it twice grows the width.
+                augmentor.apply_to_obs(obs, obs_key="agentview_image", advance=True)
 
             # simulate the physics without any actions
             # action_dim = cfg.policy.policy_head.network_kwargs.output_size
@@ -85,13 +89,13 @@ def rollout(cfg, env_dict, policy, num_env_rollouts, horizon=None, return_wandb_
             episode_frames = []
             
             for step_i in tqdm(range(horizon)):
-                if augmentor is not None:
-                    augmentor.apply_to_obs(obs, obs_key="agentview_image", advance=True)
                 data = raw_obs_to_tensor_obs(obs, task_emb, cfg, device)
                 a = policy.get_action(cfg, data)
                 obs, r, done, info = env.step(a)
                 if augmentor is not None:
-                    augmentor.apply_to_obs(obs, obs_key="agentview_image", advance=False)
+                    # Augment the freshly returned obs exactly once; this obs is
+                    # used both as the next policy input and for the video frames.
+                    augmentor.apply_to_obs(obs, obs_key="agentview_image", advance=True)
 
                 video_img = []
                 for k in range(cfg.env.env_num):

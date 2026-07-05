@@ -226,20 +226,33 @@ def build_cardpol_sweep_config(
     wandb_group: str,
     wandb_project: str = "bc-cardpol-transformer",
     modalities: List[str] = ("image", "proprio", "language"),
+    distract: bool = False,
+    enable_rollout_during_train: bool = True,
+    post_train_rollout: bool = True,
 ) -> Dict[str, Any]:
     """One sweep entry: fixed env / task / rep scale; seeds expanded via product.
 
     `modalities` selects which inputs to include. 'image' is always required;
     'proprio' adds proprioceptive state, 'language' enables language conditioning.
+    When ``distract=True``, uses ``<backbone>_distract`` configs (datasets_distract).
     """
     modalities = list(modalities)
     use_proprio = "proprio" in modalities
     use_language = "language" in modalities
 
+    resolved_config_names = [
+        name if (not distract or name.endswith("_distract")) else f"{name}_distract"
+        for name in config_names
+    ]
+
     group = wandb_run_group(wandb_group, env_name, task_id, rep_loss_scale)
+    group_suffix = f"_{modality_tag(modalities)}"
+    if distract:
+        group_suffix += "_distract"
+
     config: Dict[str, Any] = {
         "--config-path": [policy_config_path(p) for p in policies],
-        "--config-name": config_names,
+        "--config-name": resolved_config_names,
         "data.env_name": env_name,
         "data.train_ratio": train_ratio,
         "train.seed": seeds,
@@ -253,9 +266,13 @@ def build_cardpol_sweep_config(
         "policy.use_language_conditioning": str(use_language).lower(),
         "env.task_id": [task_id],
         "wandb.project": wandb_project,
-        "wandb.group": f"{group}_{modality_tag(modalities)}",
-        "wandb.policy_arch": config_names,
+        "wandb.group": f"{group}{group_suffix}",
+        "wandb.policy_arch": resolved_config_names,
     }
+
+    if distract:
+        config["eval.enable_rollout"] = str(enable_rollout_during_train).lower()
+        config["eval.post_train_rollout.enable"] = str(post_train_rollout).lower()
 
     # data_modality reflects the observation inputs (image always; proprio optional).
     data_modalities = [m for m in ("image", "proprio") if m in modalities]
@@ -269,6 +286,37 @@ def build_cardpol_sweep_config(
         config["data.use_ee"] = "false"
 
     return config
+
+
+def build_bc_distract_sweep_config(
+    *,
+    env_name: str,
+    policy: str,
+    config_name: str,
+    seeds: List[int],
+    train_ratio: float,
+    wandb_group: str,
+    wandb_project: str,
+    enable_rollout_during_train: bool = True,
+    post_train_rollout: bool = True,
+) -> Dict[str, Any]:
+    """Hydra sweep entry for bc_policy / bc_ib_policy on distracted datasets."""
+    distract_config = (
+        config_name if config_name.endswith("_distract") else f"{config_name}_distract"
+    )
+    return {
+        "--config-path": policy_config_path(policy),
+        "--config-name": distract_config,
+        "data.env_name": env_name,
+        "data.train_ratio": train_ratio,
+        "train.seed": seeds,
+        "train.train_gpus": "[0]",
+        "eval.enable_rollout": str(enable_rollout_during_train).lower(),
+        "eval.post_train_rollout.enable": str(post_train_rollout).lower(),
+        "wandb.project": wandb_project,
+        "wandb.group": f"{wandb_group}_{env_name}_{distract_config}",
+        "wandb.policy_arch": distract_config,
+    }
 
 
 if __name__ == "__main__":
@@ -312,63 +360,98 @@ if __name__ == "__main__":
             "If omitted, the modality_sets list defined in __main__ is used."
         ),
     )
+    parser.add_argument(
+        "--distract",
+        action="store_true",
+        help="Use *_distract configs (datasets_distract + eval distractor rollouts).",
+    )
+    parser.add_argument(
+        "--policy",
+        type=str,
+        default="bc_cardpol_policy",
+        choices=["bc_cardpol_policy", "bc_policy", "bc_ib_policy"],
+        help="Policy package (default: bc_cardpol_policy).",
+    )
+    parser.add_argument(
+        "--backbone",
+        type=str,
+        default="vilt",
+        help="Backbone config name; with --distract uses <backbone>_distract.yaml (default: vilt).",
+    )
     cli = parser.parse_args()
 
     libero_envs = [
+        "libero_spatial",
+        "libero_object",
+        "libero_goal",
+        "libero_10",
+    ] if cli.distract else [
         # "libero_spatial",
         "libero_object",
         # "libero_goal",
         # "libero_10",
     ]
-    policies = [
+    policies = [cli.policy] if cli.distract else [
         "bc_cardpol_policy",
         # "bc_policy",
         # "bc_ib_policy",
     ]
-    config_names = [
-        "transformer",
-        # "vilt",
+    config_names = [cli.backbone] if cli.distract else [
+        # "transformer",
+        "vilt",
         # "rnn",
         # "mlp",
     ]
-    
+
     seeds = [0, 1, 2, 3, 4]
-    task_ids = [0,1,2,3,]
-    rep_loss_scales = [ 1.0, 0.1, 0.01 ]
+    task_ids = [0, 1, 2, 3]
+    rep_loss_scales = [1.0, 0.1, 0.01]
     train_ratio = 0.9
 
-    # Which input modalities to INCLUDE. 'image' is always required; add 'proprio'
-    # and/or 'language'. Each entry is one run config; list multiple to sweep them.
     modality_sets = [
-        ["image"],                            # vision only (no proprio, no language)
-        # ["image", "proprio"],               # vision + proprio
-        # ["image", "proprio", "language"],   # full (default LIBERO setup)
+        # ["image"],
+        ["image", "proprio"],
+        # ["image", "proprio", "language"],
     ]
 
-    # CLI --modalities (repeatable) overrides the list above.
     if cli.modality_sets:
         modality_sets = [parse_modality_set(spec) for spec in cli.modality_sets]
     else:
         modality_sets = [parse_modality_set(",".join(m)) for m in modality_sets]
 
-    sweep_configs = [
-        build_cardpol_sweep_config(
-            env_name=env_name,
-            task_id=task_id,
-            rep_loss_scale=rep_loss_scale,
-            policies=policies,
-            config_names=config_names,
-            seeds=seeds,
-            train_ratio=train_ratio,
-            wandb_group=cli.wandb_group,
-            wandb_project=cli.wandb_project,
-            modalities=modalities,
-        )
-        for env_name in libero_envs
-        for task_id in task_ids
-        for rep_loss_scale in rep_loss_scales
-        for modalities in modality_sets
-    ]
+    if cli.distract and cli.policy in ("bc_policy", "bc_ib_policy"):
+        sweep_configs = [
+            build_bc_distract_sweep_config(
+                env_name=env_name,
+                policy=cli.policy,
+                config_name=cli.backbone,
+                seeds=seeds,
+                train_ratio=train_ratio,
+                wandb_group=cli.wandb_group,
+                wandb_project=cli.wandb_project,
+            )
+            for env_name in libero_envs
+        ]
+    else:
+        sweep_configs = [
+            build_cardpol_sweep_config(
+                env_name=env_name,
+                task_id=task_id,
+                rep_loss_scale=rep_loss_scale,
+                policies=policies,
+                config_names=config_names,
+                seeds=seeds,
+                train_ratio=train_ratio,
+                wandb_group=cli.wandb_group,
+                wandb_project=cli.wandb_project,
+                modalities=modalities,
+                distract=cli.distract,
+            )
+            for env_name in libero_envs
+            for task_id in task_ids
+            for rep_loss_scale in rep_loss_scales
+            for modalities in modality_sets
+        ]
 
     main(
         cli.dry_run,
@@ -382,3 +465,9 @@ if __name__ == "__main__":
         mem=cli.mem,
         time_limit=cli.time_limit,
     )
+    
+#     python launch_scripts/mll/submit_libero.py \
+#   --distract \
+#   --job-name=libero-vilt-distract \
+#   --wandb-project=bc-ib-vilt-distract \
+#   --wandb-group=bc-vilt-distract --num-runs-per-job 6

@@ -1,0 +1,21 @@
+defaults:
+  - rnn
+  - override ../base/data@data: distract
+  - _self_
+
+eval:
+  post_train_rollout:
+    enable: true
+    eval_all: false
+    log_video: true
+
+hydra:
+  run:
+    dir: ./outputs/libero/${algo.algo_name}/rnn_distract/${data.env_name}/ratio${data.train_ratio}_task${data.dual_task.focused_task_id}/${now:%m%d}_${now:%H%M}_seed${train.seed}
+  sweep:
+    dir: ./outputs/libero/${algo.algo_name}/rnn_distract/${data.env_name}/ratio${data.train_ratio}_task${data.dual_task.focused_task_id}/${now:%m%d}_${now:%H%M}_seed${train.seed}
+    subdir: ${hydra.job.num}
+
+wandb:
+  group: ${data.env_name}_${algo.algo_name}_rnn_distract
+  dir: ./wandb/${env.env_type}/${algo.algo_name}/rnn_distract/${data.env_name}/ratio${data.train_ratio}
