@@ -42,9 +42,11 @@ def init_wandb(cfg, group=None):
     if isinstance(wandb_cfg.get("wandb"), dict):
         wandb_cfg["wandb"]["policy_arch"] = policy_arch
 
-    os.makedirs(cfg.wandb.dir, exist_ok=True)
+    run_dir = cfg.experiment_dir if getattr(cfg, "experiment_dir", None) else cfg.wandb.dir
+    os.makedirs(run_dir, exist_ok=True)
+    cfg.wandb.dir = run_dir
     init_kwargs = {
-        "dir": cfg.wandb.dir,
+        "dir": run_dir,
         "config": wandb_cfg,
         "project": cfg.wandb.project,
         "name": cfg.wandb.name,
@@ -57,7 +59,7 @@ def init_wandb(cfg, group=None):
         init_kwargs["group"] = str(resolved_group)
 
     wandb.init(**init_kwargs)
-    OmegaConf.save(cfg, f"{wandb.run.dir}/config.yaml")
+    OmegaConf.save(cfg, os.path.join(run_dir, "config.yaml"))
 
 
 def pretty_print_cfg(cfg):

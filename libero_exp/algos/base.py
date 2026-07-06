@@ -31,6 +31,7 @@ from ..utils.train_utils import setup_optimizer, setup_lr_scheduler
 from ..utils.video_utils import VideoWriter
 from ..utils.results_utils import rollout, merge_results, save_success_rate
 from ..utils.record_utils import init_wandb, MetricLogger, BestAvgLoss, AverageMeter, MetricMeter
+from ..utils.run_utils import finalize_run_artifacts
 
 REGISTERED_ALGOS = {}
 
@@ -453,7 +454,8 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
 
         if self.fabric.is_global_zero:
             if self._wandb_enabled() and wandb.run is not None:
-                print(f"finished training in {wandb.run.dir}")
+                finalize_run_artifacts(self.cfg)
+                print(f"finished training in {self.cfg.experiment_dir}")
                 wandb.finish()
 
     @torch.no_grad()

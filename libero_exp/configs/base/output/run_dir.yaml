@@ -1,0 +1,10 @@
+# @package _global_
+hydra:
+  run:
+    dir: ${run_output_dir:${wandb.group},${wandb.name}}
+  sweep:
+    dir: ${run_output_dir:${wandb.group},${wandb.name}}
+    subdir: ${hydra:job.num}
+
+wandb:
+  dir: ${run_output_dir:${wandb.group},${wandb.name}}

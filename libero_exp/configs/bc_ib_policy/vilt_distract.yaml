@@ -2,6 +2,7 @@ defaults:
   - vilt
   - override ../base/data@data: distract
   - _self_
+  - ../base/output@_global_: run_dir
 
 eval:
   post_train_rollout:
@@ -9,13 +10,6 @@ eval:
     eval_all: false
     log_video: true
 
-hydra:
-  run:
-    dir: ./outputs/libero/${algo.algo_name}/vilt_distract/${data.env_name}/ratio${data.train_ratio}_scale${train.mi_loss_scale}_${train.mine_mi_loss_scale}/${now:%m%d}_${now:%H%M}_seed${train.seed}
-  sweep:
-    dir: ./outputs/libero/${algo.algo_name}/vilt_distract/${data.env_name}/ratio${data.train_ratio}_scale${train.mi_loss_scale}_${train.mine_mi_loss_scale}/${now:%m%d}_${now:%H%M}_seed${train.seed}
-    subdir: ${hydra.job.num}
 
 wandb:
   group: ${data.env_name}_${algo.algo_name}_vilt_distract
-  dir: ./wandb/${env.env_type}/${algo.algo_name}/${data.env_name}/ratio${data.train_ratio}_scale${train.mi_loss_scale}_${train.mine_mi_loss_scale}
