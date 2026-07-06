@@ -1,8 +1,7 @@
 defaults:
   - rnn
-  - override ../base/data@data: distract
   - _self_
-  - ../base/output@_global_: run_dir
+  - override ../base/data@data: distract
 
 eval:
   post_train_rollout:

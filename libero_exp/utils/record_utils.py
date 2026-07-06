@@ -6,8 +6,10 @@ import torch
 import torch.distributed as dist
 import logging
 import numpy as np
+import pandas as pd
 from collections import defaultdict, deque
 from omegaconf import DictConfig, OmegaConf
+from typing import Any, Dict, List, Optional
 
 _POLICY_ARCH_FROM_TYPE = {
     "BCMLPPolicy": "mlp",
@@ -32,6 +34,45 @@ def resolve_policy_arch(cfg):
     return "unknown"
 
 
+def _is_scalar_metric(value: Any) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return True
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return True
+    if isinstance(value, torch.Tensor) and value.numel() == 1:
+        return True
+    return False
+
+
+def _scalar_metric_value(value: Any) -> Any:
+    if isinstance(value, torch.Tensor):
+        return value.item()
+    if isinstance(value, (np.integer, np.floating)):
+        return value.item()
+    return value
+
+
+class WandbMetricsLogger:
+    """Accumulates scalar metrics passed to wandb.log for end-of-run CSV export."""
+
+    def __init__(self) -> None:
+        self.by_step: Dict[Any, Dict[str, Any]] = {}
+
+    def log(self, metrics: Dict[str, Any], step: Optional[int] = None) -> None:
+        if step is None:
+            step = len(self.by_step)
+        row = self.by_step.setdefault(step, {"_step": step})
+        for key, value in metrics.items():
+            if _is_scalar_metric(value):
+                row[key] = _scalar_metric_value(value)
+
+    def to_dataframe(self) -> pd.DataFrame:
+        if not self.by_step:
+            return pd.DataFrame()
+        rows = sorted(self.by_step.values(), key=lambda row: row["_step"])
+        return pd.DataFrame(rows)
+
+
 def init_wandb(cfg, group=None):
     cfg = OmegaConf.to_container(cfg, resolve=True)
     cfg = OmegaConf.create(cfg)
@@ -43,6 +84,7 @@ def init_wandb(cfg, group=None):
         wandb_cfg["wandb"]["policy_arch"] = policy_arch
 
     run_dir = cfg.experiment_dir if getattr(cfg, "experiment_dir", None) else cfg.wandb.dir
+    run_dir = os.path.abspath(str(run_dir))
     os.makedirs(run_dir, exist_ok=True)
     cfg.wandb.dir = run_dir
     init_kwargs = {

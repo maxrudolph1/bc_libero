@@ -30,7 +30,7 @@ from ..utils.env_utils import build_env
 from ..utils.train_utils import setup_optimizer, setup_lr_scheduler
 from ..utils.video_utils import VideoWriter
 from ..utils.results_utils import rollout, merge_results, save_success_rate
-from ..utils.record_utils import init_wandb, MetricLogger, BestAvgLoss, AverageMeter, MetricMeter
+from ..utils.record_utils import init_wandb, MetricLogger, BestAvgLoss, AverageMeter, MetricMeter, WandbMetricsLogger
 from ..utils.run_utils import finalize_run_artifacts
 
 REGISTERED_ALGOS = {}
@@ -263,6 +263,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
         cfg = self.cfg
         self.metric_logger = MetricLogger(delimiter=" ")
         self.best_loss_logger = BestAvgLoss(window_size=5)
+        self.wandb_metrics_logger = WandbMetricsLogger() if self._wandb_enabled() else None
         if self._wandb_enabled():
             self.init_wandb_run()
 
@@ -283,7 +284,10 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
         if not self._wandb_enabled() or wandb.run is None:
             return
         metrics = {**metrics, "epoch": getattr(self, "epoch", 0)}
-        wandb.log(metrics, step=self.global_step if step is None else step)
+        resolved_step = self.global_step if step is None else step
+        if self.wandb_metrics_logger is not None:
+            self.wandb_metrics_logger.log(metrics, step=resolved_step)
+        wandb.log(metrics, step=resolved_step)
 
     def _train_batch_metrics(self):
         metrics = {f"train/{k}": v.avg for k, v in self.losses.meters.items()}
@@ -456,9 +460,10 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
             self.post_train_rollout_tasks()
 
         if self.fabric.is_global_zero:
-            if self._wandb_enabled() and wandb.run is not None:
-                finalize_run_artifacts(self.cfg)
+            if self._wandb_enabled():
+                finalize_run_artifacts(self.cfg, metrics_logger=self.wandb_metrics_logger)
                 print(f"finished training in {self.cfg.experiment_dir}")
+            if self._wandb_enabled() and wandb.run is not None:
                 wandb.finish()
 
     @torch.no_grad()

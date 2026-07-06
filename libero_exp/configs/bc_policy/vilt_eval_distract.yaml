@@ -1,4 +1,4 @@
 defaults:
   - vilt_eval
-  - override ../base/data@data: distract
   - _self_
+  - override ../base/data@data: distract

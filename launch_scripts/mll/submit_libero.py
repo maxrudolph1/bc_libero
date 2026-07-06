@@ -20,15 +20,14 @@ from typing import Any, Dict, Iterator, List, Optional
 REPO_ROOT = Path("/u/mrudolph/documents/BC-IB")
 SLURM_TEMP_SCRIPT = REPO_ROOT / "launch_scripts/mll/temp_submission.slurm"
 SLURM_LOG_ROOT = REPO_ROOT / "slurm_jobs/libero"
-DEFAULT_SLURM_EXCLUDE = "slurm-node-[008-011]"
+DEFAULT_SLURM_EXCLUDE = ""
 
 SLURM_TEMPLATE = """#!/bin/bash
 #SBATCH --job-name={job_name}
 #SBATCH --output={log_root}/job_%j/job_%j.out
 #SBATCH --error={log_root}/job_%j/job_%j.err
 #SBATCH --partition={partition}
-#SBATCH --exclude={exclude}
-#SBATCH --gres=gpu:{gpus}
+{exclude_directive}#SBATCH --gres=gpu:{gpus}
 #SBATCH --cpus-per-task={cpus}
 #SBATCH --mem={mem}
 #SBATCH --time={time_limit}
@@ -96,11 +95,12 @@ def submit_slurm_job(
     mem: str = "768GB",
     time_limit: str = "8:00:00",
 ) -> Optional[int]:
+    exclude_directive = f"#SBATCH --exclude={exclude}\n" if exclude else ""
     slurm_script = SLURM_TEMPLATE.format(
         job_name=job_name,
         log_root=SLURM_LOG_ROOT,
         partition=partition,
-        exclude=exclude,
+        exclude_directive=exclude_directive,
         gpus=gpus,
         cpus=cpus,
         mem=mem,
@@ -381,7 +381,7 @@ if __name__ == "__main__":
         "--exclude",
         type=str,
         default=DEFAULT_SLURM_EXCLUDE,
-        help="Slurm --exclude node list (default: %(default)s).",
+        help="Slurm --exclude node list (default: none).",
     )
     parser.add_argument("--gpus", type=int, default=1)
     parser.add_argument("--cpus", type=int, default=16)
@@ -462,7 +462,7 @@ if __name__ == "__main__":
         # "mlp",
     ]
 
-    seeds = [0, 1, 2,3,4]
+    seeds = [0, 1, 2,3,4, 5, 6, 7, 8, 9]
     task_ids = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     rep_loss_scales = [0, 0.01] #  0.001, 0.01]
     train_ratio = 0.9

@@ -3,7 +3,6 @@
 #SBATCH --output=/u/mrudolph/documents/BC-IB/slurm_jobs/libero/job_%j/job_%j.out
 #SBATCH --error=/u/mrudolph/documents/BC-IB/slurm_jobs/libero/job_%j/job_%j.err
 #SBATCH --partition=allnodes
-#SBATCH --exclude=slurm-node-[008-011]
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128GB
@@ -23,6 +22,7 @@ echo "SLURM_JOB_NODELIST=$SLURM_JOB_NODELIST"
 echo "Job started at $(date)"
 echo "Running on node: $(hostname)"
 
-python train_libero.py --config-path=libero_exp/configs/bc_cardpol_policy --config-name=vilt data.env_name=libero_spatial data.train_ratio=0.9 train.seed=4 train.train_gpus=[0] train.rep_loss_scale=0.01 train.rep_classifier_hidden=256 data.dual_task.enable=true data.dual_task.focused_task_id=9 data.dual_task.future_step_min=1 data.dual_task.future_step_max=10 policy.use_language_conditioning=false env.task_id=9 wandb.project=bc-cardpol-transformer wandb.group=bc-cardpol-transformer_img+proprio_cam-agent wandb.policy_arch=vilt data.obs.modality.rgb=[agentview_rgb] data.data_modality=[image,proprio]
+python train_libero.py --config-path=libero_exp/configs/bc_cardpol_policy --config-name=vilt_distract data.env_name=libero_spatial data.train_ratio=0.9 train.seed=8 train.train_gpus=[0] train.rep_loss_scale=0.01 train.rep_classifier_hidden=256 data.dual_task.enable=true data.dual_task.focused_task_id=9 data.dual_task.future_step_min=1 data.dual_task.future_step_max=10 policy.use_language_conditioning=false env.task_id=9 wandb.project=bc-cardpol-transformer wandb.group=07062026-distract-goal_img+proprio_cam-agent_distract wandb.policy_arch=vilt_distract eval.enable_rollout=true eval.post_train_rollout.enable=true data.obs.modality.rgb=[agentview_rgb] data.data_modality=[image,proprio]
+python train_libero.py --config-path=libero_exp/configs/bc_cardpol_policy --config-name=vilt_distract data.env_name=libero_spatial data.train_ratio=0.9 train.seed=9 train.train_gpus=[0] train.rep_loss_scale=0.01 train.rep_classifier_hidden=256 data.dual_task.enable=true data.dual_task.focused_task_id=9 data.dual_task.future_step_min=1 data.dual_task.future_step_max=10 policy.use_language_conditioning=false env.task_id=9 wandb.project=bc-cardpol-transformer wandb.group=07062026-distract-goal_img+proprio_cam-agent_distract wandb.policy_arch=vilt_distract eval.enable_rollout=true eval.post_train_rollout.enable=true data.obs.modality.rgb=[agentview_rgb] data.data_modality=[image,proprio]
 
 echo "Job ended at $(date)"
