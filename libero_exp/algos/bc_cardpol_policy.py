@@ -119,10 +119,23 @@ class BC_CARDPOL_Policy(BaseAlgo):
 
     @staticmethod
     def _pool_representation(x):
-        """Pool spatial input x to a fixed-size vector for the task classifier."""
+        """Pool spatial input x to a fixed-size observation vector for the task classifier.
+
+        For 4-D spatial encodings (B, T, num_modalities, E) slot 0 is the
+        language / action token: it is a constant zero when
+        ``policy.use_language_conditioning=false`` and a task-language embedding
+        otherwise. Pooling that token gives the classifier no observation signal
+        (and, with language on, leaks the task id directly), so instead we
+        mean-pool the remaining observation tokens (spatial summary + proprio /
+        image tokens) at the last timestep, forcing task information through the
+        visual representation.
+        """
         if x.dim() == 4:
-            # (B, T, num_modalities, E): last timestep, language / action token slot
-            return x[:, -1, 0]
+            # (B, T, num_modalities, E)
+            obs_tokens = x[:, -1, 1:]  # drop the slot-0 language / action token
+            if obs_tokens.shape[1] == 0:  # no non-language tokens (shouldn't happen)
+                obs_tokens = x[:, -1]
+            return obs_tokens.mean(dim=1)
         if x.dim() == 3:
             return x[:, -1]
         if x.dim() == 2:

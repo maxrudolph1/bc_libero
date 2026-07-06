@@ -444,16 +444,12 @@ if __name__ == "__main__":
     cli = parser.parse_args()
 
     libero_envs = [
-        "libero_spatial",
-        "libero_object",
-        "libero_goal",
-        "libero_10",
-    ] if cli.distract else [
         # "libero_spatial",
         "libero_object",
         # "libero_goal",
-        # "libero_10",
+        # "libero_10", 
     ]
+
     policies = [cli.policy] if cli.distract else [
         "bc_cardpol_policy",
         # "bc_policy",
@@ -467,8 +463,8 @@ if __name__ == "__main__":
     ]
 
     seeds = [0, 1, 2, 3, 4]
-    task_ids = [0, 1, 2, 3]
-    rep_loss_scales = [1.0, 0.1, 0.01]
+    task_ids = [0,]
+    rep_loss_scales = [0, 0.001, 0.01]
     train_ratio = 0.9
 
     modality_sets = [

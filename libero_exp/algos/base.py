@@ -309,7 +309,14 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
         self.fabric.barrier()
 
     def before_epoch(self):
-        pass
+        # Reset running meters each epoch so the per-batch wandb logs reflect the
+        # current epoch rather than a lifetime cumulative average. Otherwise the
+        # cumulative average lags the true value and mismatches the per-epoch mean
+        # logged in after_epoch (same train/* keys), which shows up as a spike at
+        # every epoch boundary.
+        self.losses = MetricMeter()
+        self.batch_time.reset()
+        self.data_time.reset()
 
     def run_epoch(self):
         cfg = self.cfg
