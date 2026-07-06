@@ -11,9 +11,7 @@ import lightning
 from omegaconf import DictConfig
 
 from libero_exp.algos import *
-from libero_exp.utils.run_utils import register_hydra_resolvers, save_run_configs, setup_run_output_dir
-
-register_hydra_resolvers()
+from libero_exp.utils.run_utils import save_run_configs, setup_run_output_dir
 
 
 @hydra.main(config_path="libero_exp/configs/bc_policy", config_name="vilt", version_base=None)

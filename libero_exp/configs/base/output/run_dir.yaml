@@ -1,10 +1,9 @@
 # @package _global_
+# Hydra internal logs only; run artifacts live under artifacts/<wandb.group>/<run_name>_<id>/
+# via libero_exp.utils.run_utils.setup_run_output_dir in train_libero.py.
 hydra:
   run:
-    dir: ${run_output_dir:${wandb.group},${wandb.name}}
+    dir: artifacts/.hydra/single/${now:%Y%m%d_%H%M%S_%f}
   sweep:
-    dir: ${run_output_dir:${wandb.group},${wandb.name}}
+    dir: artifacts/.hydra/multirun/${now:%Y%m%d_%H%M%S}
     subdir: ${hydra:job.num}
-
-wandb:
-  dir: ${run_output_dir:${wandb.group},${wandb.name}}

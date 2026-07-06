@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import shutil
 from typing import Any, Optional
 
 import wandb
 import yaml
 from hydra.core.hydra_config import HydraConfig
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 
 def _sanitize_path_component(value: Any) -> str:
@@ -23,43 +24,29 @@ def _sanitize_path_component(value: Any) -> str:
     return text or "run"
 
 
-def resolve_run_output_dir(cfg: DictConfig) -> str:
-    """Return `<wandb-group>/outputs/<wandb-name>/` for this run."""
+def resolve_run_output_dir(cfg: DictConfig, *, suffix: Optional[str] = None) -> str:
+    """Return `artifacts/<wandb-group>/<wandb-name>_<suffix>/` for this run."""
     group = OmegaConf.select(cfg, "wandb.group")
     name = OmegaConf.select(cfg, "wandb.name")
     if group is None or str(group) in ("", "None", "null", "???"):
         group = "ungrouped"
     if name is None or str(name) in ("", "None", "null", "???"):
         name = "run"
-    return os.path.join(
-        _sanitize_path_component(group),
-        "outputs",
-        _sanitize_path_component(name),
-    )
-
-
-def run_output_dir_resolver(group: Any, name: Any) -> str:
-    return resolve_run_output_dir(
-        OmegaConf.create({"wandb": {"group": group, "name": name}})
-    )
-
-
-def register_hydra_resolvers() -> None:
-    if not OmegaConf.has_resolver("run_output_dir"):
-        OmegaConf.register_new_resolver(
-            "run_output_dir",
-            run_output_dir_resolver,
-            use_cache=False,
-        )
+    if suffix is None:
+        suffix = secrets.token_hex(3)
+    run_name = f"{_sanitize_path_component(name)}_{suffix}"
+    return os.path.join("artifacts", _sanitize_path_component(group), run_name)
 
 
 def setup_run_output_dir(cfg: DictConfig) -> str:
     """Create the run directory and sync cfg paths to it."""
-    run_dir = resolve_run_output_dir(cfg)
+    suffix = secrets.token_hex(3)
+    run_dir = resolve_run_output_dir(cfg, suffix=suffix)
     os.makedirs(run_dir, exist_ok=True)
-    cfg.experiment_dir = run_dir
-    if OmegaConf.select(cfg, "wandb") is not None:
-        cfg.wandb.dir = run_dir
+    with open_dict(cfg):
+        cfg.experiment_dir = run_dir
+        if OmegaConf.select(cfg, "wandb") is not None:
+            cfg.wandb.dir = run_dir
     return run_dir
 
 
@@ -87,12 +74,14 @@ def save_run_configs(cfg: DictConfig, output_dir: str) -> None:
     with open(os.path.join(output_dir, "hydra_overrides.yaml"), "w", encoding="utf-8") as f:
         yaml.safe_dump(overrides, f, sort_keys=False)
 
-    hydra_config_src = os.path.join(hydra_cfg.runtime.output_dir, ".hydra", "config.yaml")
-    if os.path.exists(hydra_config_src):
-        shutil.copy2(
-            hydra_config_src,
-            os.path.join(output_dir, "hydra_config.yaml"),
-        )
+    hydra_output_dir = OmegaConf.select(hydra_cfg, "runtime.output_dir", default=None)
+    if hydra_output_dir:
+        hydra_config_src = os.path.join(hydra_output_dir, ".hydra", "config.yaml")
+        if os.path.exists(hydra_config_src):
+            shutil.copy2(
+                hydra_config_src,
+                os.path.join(output_dir, "hydra_config.yaml"),
+            )
 
 
 def export_wandb_metrics_csv(

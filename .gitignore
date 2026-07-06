@@ -1,6 +1,8 @@
 wandb/
 outputs/
 outputs
+artifacts/
+artifacts
 cache/
 *.mp4
 *.pt

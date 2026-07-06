@@ -431,7 +431,10 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
                         )
                 self._log_wandb(val_metrics)
 
-        if cfg.eval.enable_rollout:
+        if cfg.eval.enable_rollout and (
+            self.epoch % cfg.eval.rollout_freq == 0
+            or self.epoch == cfg.train.n_epochs
+        ):
             log_video = (
                 self.epoch % cfg.train.save_freq == 0
                 or self.epoch == cfg.train.n_epochs

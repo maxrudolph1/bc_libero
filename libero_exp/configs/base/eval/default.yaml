@@ -8,6 +8,7 @@ eval_every: ${train.epoch_log_freq}
 
 # rollout during training (uses data.distractor when enabled)
 enable_rollout: true
+rollout_freq: 10   # sim rollout every N epochs (plus final epoch)
 eval_all: false   # if false, only evaluate on final checkpoint (standalone eval_libero.py)
 
 # rollout after training completes, logged to the same wandb run before finish()

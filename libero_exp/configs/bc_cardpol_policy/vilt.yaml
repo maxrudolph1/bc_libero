@@ -26,5 +26,5 @@ wandb:
   use_wandb: true
   policy_arch: vilt
   project: bc-cardpol-vilt
-  name: ${data.env_name}_${algo.algo_name}_vilt_task${data.dual_task.focused_task_id}_${now:%m%d}_${now:%H%M}_seed${train.seed}_ratio${data.train_ratio}_${hydra:job.num}
+  name: ${data.env_name}_${algo.algo_name}_vilt_task${data.dual_task.focused_task_id}_${now:%m%d}_${now:%H%M}_seed${train.seed}_ratio${data.train_ratio}
   group: ${data.env_name}_${algo.algo_name}_vilt
