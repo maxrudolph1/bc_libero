@@ -263,6 +263,7 @@ def build_cardpol_sweep_config(
     config_names: List[str],
     seeds: List[int],
     train_ratio: float,
+    n_epochs: int,
     wandb_group: str,
     wandb_project: str = "bc-cardpol-transformer",
     modalities: List[str] = ("image", "proprio", "language"),
@@ -299,6 +300,7 @@ def build_cardpol_sweep_config(
         "--config-name": resolved_config_names,
         "data.env_name": env_name,
         "data.train_ratio": train_ratio,
+        "train.n_epochs": n_epochs,
         "train.seed": seeds,
         "train.train_gpus": "[0]",
         "train.rep_loss_scale": rep_loss_scale,
@@ -336,6 +338,84 @@ def build_cardpol_sweep_config(
     return config
 
 
+def build_vae_sweep_config(
+    *,
+    env_name: str,
+    task_id: int,
+    config_name: str,
+    seeds: List[int],
+    train_ratio: float,
+    n_epochs: int,
+    wandb_group: str,
+    wandb_project: str = "bc-vae-vilt",
+    modalities: List[str] = ("image", "proprio"),
+    cameras: List[str] = ("agentview",),
+    distract: bool = False,
+    enable_rollout_during_train: bool = True,
+    post_train_rollout: bool = True,
+) -> Dict[str, Any]:
+    """Hydra sweep entry for bc_vae_policy (VAE representation baseline).
+
+    `modalities` selects observation inputs: 'image' only or 'image'+'proprio'.
+    When ``distract=True``, uses ``<backbone>_distract`` configs (datasets_distract).
+    """
+    modalities = list(modalities)
+    cameras = list(cameras)
+    use_proprio = "proprio" in modalities
+
+    resolved_config_name = (
+        config_name
+        if (not distract or config_name.endswith("_distract"))
+        else f"{config_name}_distract"
+    )
+
+    group_suffix = f"_{modality_tag(modalities)}_cam-{camera_tag(cameras)}"
+    if distract:
+        group_suffix += "_distract"
+
+    config: Dict[str, Any] = {
+        "--config-path": policy_config_path("bc_vae_policy"),
+        "--config-name": resolved_config_name,
+        "data.env_name": env_name,
+        "data.train_ratio": train_ratio,
+        "train.n_epochs": n_epochs,
+        "train.seed": seeds,
+        "train.train_gpus": "[0]",
+        "data.dual_task.enable": "true",
+        "data.dual_task.focused_task_id": task_id,
+        "data.dual_task.future_step_min": 1,
+        "data.dual_task.future_step_max": 10,
+        "policy.use_language_conditioning": "false",
+        "env.task_id": [task_id],
+        "wandb.project": wandb_project,
+        "wandb.group": f"{wandb_group}{group_suffix}",
+        "wandb.policy_arch": resolved_config_name,
+    }
+
+    if distract:
+        config["eval.enable_rollout"] = str(enable_rollout_during_train).lower()
+        config["eval.post_train_rollout.enable"] = str(post_train_rollout).lower()
+
+    rgb_keys = [_CAMERA_RGB_KEY[c] for c in cameras]
+    config["data.obs.modality.rgb"] = "[" + ",".join(rgb_keys) + "]"
+
+    data_modalities = [m for m in ("image", "proprio") if m in modalities]
+    config["data.data_modality"] = "[" + ",".join(data_modalities) + "]"
+
+    if not use_proprio:
+        config["data.obs.modality.low_dim"] = "[]"
+        config["data.use_gripper"] = "false"
+        config["data.use_joint"] = "false"
+        config["data.use_ee"] = "false"
+
+    return config
+
+
+VAE_BASELINE_MODALITY_SETS = [["image"], ["image", "proprio"]]
+VAE_BASELINE_DISTRACT_VALUES = [False, True]
+VAE_BASELINE_SEEDS = [0, 1, 2, 3, 4]
+
+
 def build_bc_distract_sweep_config(
     *,
     env_name: str,
@@ -343,6 +423,7 @@ def build_bc_distract_sweep_config(
     config_name: str,
     seeds: List[int],
     train_ratio: float,
+    n_epochs: int,
     wandb_group: str,
     wandb_project: str,
     cameras: List[str] = ("agentview",),
@@ -360,6 +441,7 @@ def build_bc_distract_sweep_config(
         "--config-name": distract_config,
         "data.env_name": env_name,
         "data.train_ratio": train_ratio,
+        "train.n_epochs": n_epochs,
         "train.seed": seeds,
         "train.train_gpus": "[0]",
         "data.obs.modality.rgb": "[" + ",".join(rgb_keys) + "]",
@@ -429,10 +511,18 @@ if __name__ == "__main__":
         help="Use *_distract configs (datasets_distract + eval distractor rollouts).",
     )
     parser.add_argument(
+        "--vae-baseline-sweep",
+        action="store_true",
+        help=(
+            "Sweep bc_vae_policy baseline: modalities (image, image+proprio), "
+            "distractions (yes/no), seeds 0-4."
+        ),
+    )
+    parser.add_argument(
         "--policy",
         type=str,
         default="bc_cardpol_policy",
-        choices=["bc_cardpol_policy", "bc_policy", "bc_ib_policy"],
+        choices=["bc_cardpol_policy", "bc_policy", "bc_ib_policy", "bc_vae_policy"],
         help="Policy package (default: bc_cardpol_policy).",
     )
     parser.add_argument(
@@ -443,10 +533,13 @@ if __name__ == "__main__":
     )
     cli = parser.parse_args()
 
+    if cli.vae_baseline_sweep:
+        cli.policy = "bc_vae_policy"
+
     libero_envs = [
-        # "libero_spatial",
+        "libero_spatial",
         # "libero_object",
-        "libero_goal",
+        # "libero_goal",
         # "libero_10", 
     ]
 
@@ -462,31 +555,57 @@ if __name__ == "__main__":
         # "mlp",
     ]
 
-    seeds = [0, 1, 2,3,4, ]
+    seeds = [0, 1, 2, 3, 4]
     task_ids = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     rep_loss_scales = [0.0, 0.01, 0.001, 0.005]
     train_ratio = 0.9
+    n_epochs = 100
 
-    modality_sets = [
-        # ["image"],
-        ["image", "proprio"],
-        # ["image", "proprio", "language"],
-    ]
-
-    if cli.modality_sets:
-        modality_sets = [parse_modality_set(spec) for spec in cli.modality_sets]
+    if cli.vae_baseline_sweep:
+        modality_sets = [parse_modality_set(",".join(m)) for m in VAE_BASELINE_MODALITY_SETS]
+        distract_values = VAE_BASELINE_DISTRACT_VALUES
+        seeds = VAE_BASELINE_SEEDS
     else:
-        modality_sets = [parse_modality_set(",".join(m)) for m in modality_sets]
+        modality_sets = [
+            ["image"],
+            # ["image", "proprio"],
+            # ["image", "proprio", "language"],
+        ]
+        if cli.modality_sets:
+            modality_sets = [parse_modality_set(spec) for spec in cli.modality_sets]
+        else:
+            modality_sets = [parse_modality_set(",".join(m)) for m in modality_sets]
+        distract_values = [True] if cli.distract else [False]
 
     cameras = parse_camera_set(cli.cameras) if cli.cameras else list(DEFAULT_CAMERAS)
-    if cli.distract and "agentview" not in cameras:
+    if (cli.distract or cli.vae_baseline_sweep) and "agentview" not in cameras:
         parser.error(
             "--distract requires the 'agentview' camera: the distractor is baked "
             "into agentview_rgb (datasets_distract) and applied to agentview at "
             "rollout, and the shape check expects agentview_rgb=(3,128,256)."
         )
 
-    if cli.distract and cli.policy in ("bc_policy", "bc_ib_policy"):
+    if cli.vae_baseline_sweep:
+        sweep_configs = [
+            build_vae_sweep_config(
+                env_name=env_name,
+                task_id=task_id,
+                config_name=cli.backbone,
+                seeds=seeds,
+                train_ratio=train_ratio,
+                n_epochs=n_epochs,
+                wandb_group=cli.wandb_group,
+                wandb_project=cli.wandb_project,
+                modalities=modalities,
+                cameras=cameras,
+                distract=distract,
+            )
+            for env_name in libero_envs
+            for task_id in task_ids
+            for modalities in modality_sets
+            for distract in distract_values
+        ]
+    elif cli.distract and cli.policy in ("bc_policy", "bc_ib_policy"):
         sweep_configs = [
             build_bc_distract_sweep_config(
                 env_name=env_name,
@@ -494,6 +613,7 @@ if __name__ == "__main__":
                 config_name=cli.backbone,
                 seeds=seeds,
                 train_ratio=train_ratio,
+                n_epochs=n_epochs,
                 wandb_group=cli.wandb_group,
                 wandb_project=cli.wandb_project,
                 cameras=cameras,
@@ -510,6 +630,7 @@ if __name__ == "__main__":
                 config_names=config_names,
                 seeds=seeds,
                 train_ratio=train_ratio,
+                n_epochs=n_epochs,
                 wandb_group=cli.wandb_group,
                 wandb_project=cli.wandb_project,
                 modalities=modalities,
@@ -540,3 +661,10 @@ if __name__ == "__main__":
 #   --job-name=libero-vilt-distract \
 #   --wandb-project=bc-ib-vilt-distract \
 #   --wandb-group=bc-vilt-distract --num-runs-per-job 6
+#
+#     python launch_scripts/mll/submit_libero.py \
+#   --vae-baseline-sweep \
+#   --dry-run \
+#   --job-name=libero-vae-baseline \
+#   --wandb-project=bc-vae-vilt \
+#   --wandb-group=bc-vae-baseline --num-runs-per-job 5
