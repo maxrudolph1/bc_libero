@@ -127,6 +127,10 @@ TASK_ID_COL = "cfg/env/task_id"
 SUCCESS_COL = "rollout/success_env_avg"
 
 
+BASELINE_REP_LOSS_SCALE = 0.0
+REP_LOSS_SCALE_VARIANT = 0.01
+
+
 def success_pivot_by_task_and_rep_loss_scale(
     df: pd.DataFrame,
     *,
@@ -149,6 +153,65 @@ def success_pivot_by_task_and_rep_loss_scale(
     pivot.columns = [f"{col:g}" for col in pivot.columns]
     pivot.index.name = "task_id"
     return pivot
+
+
+def mean_success_across_tasks_by_rep_loss_scale(
+    df: pd.DataFrame,
+    *,
+    rep_loss_scale_col: str = REP_LOSS_SCALE_COL,
+    task_id_col: str = TASK_ID_COL,
+    success_col: str = SUCCESS_COL,
+) -> pd.Series:
+    """Average rollout success across tasks for each rep_loss_scale."""
+    pivot = success_pivot_by_task_and_rep_loss_scale(
+        df,
+        rep_loss_scale_col=rep_loss_scale_col,
+        task_id_col=task_id_col,
+        success_col=success_col,
+    )
+    return pivot.astype(float).mean(numeric_only=True)
+
+
+def _rep_loss_scale_column_key(value: float) -> str:
+    return f"{value:g}"
+
+
+def build_cross_experiment_summary(
+    artifacts_dir: Path,
+    *,
+    baseline_rep_loss_scale: float = BASELINE_REP_LOSS_SCALE,
+    variant_rep_loss_scale: float = REP_LOSS_SCALE_VARIANT,
+) -> pd.DataFrame:
+    """Build a 2 x num_experiments summary of mean task success by rep_loss_scale."""
+    baseline_key = _rep_loss_scale_column_key(baseline_rep_loss_scale)
+    variant_key = _rep_loss_scale_column_key(variant_rep_loss_scale)
+    row_labels = {
+        baseline_key: f"Baseline ({baseline_key})",
+        variant_key: f"rep\\_loss\\_scale={variant_key}",
+    }
+
+    experiment_means: dict[str, pd.Series] = {}
+    for experiment_dir in sorted(path for path in artifacts_dir.iterdir() if path.is_dir()):
+        df = parse_experiment_dir(experiment_dir)
+        if df.empty:
+            continue
+        experiment_means[experiment_dir.name] = mean_success_across_tasks_by_rep_loss_scale(df)
+
+    if not experiment_means:
+        return pd.DataFrame()
+
+    per_experiment = pd.DataFrame(experiment_means)
+    summary = pd.DataFrame(
+        {
+            experiment_name: [
+                per_experiment.loc[baseline_key, experiment_name],
+                per_experiment.loc[variant_key, experiment_name],
+            ]
+            for experiment_name in per_experiment.columns
+        },
+        index=[row_labels[baseline_key], row_labels[variant_key]],
+    )
+    return summary
 
 
 def _escape_latex_text(text: str) -> str:
