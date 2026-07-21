@@ -9,7 +9,7 @@ cache/
 *.pth
 *.ckpt
 LIBERO/
-
+**/*.zip
 *~
 .hydra
 *pyc
