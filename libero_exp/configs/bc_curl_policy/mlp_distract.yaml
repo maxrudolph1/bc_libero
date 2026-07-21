@@ -1,0 +1,14 @@
+defaults:
+  - mlp
+  - _self_
+  - override ../base/data@data: distract
+
+eval:
+  post_train_rollout:
+    enable: true
+    eval_all: false
+    log_video: true
+
+
+wandb:
+  group: ${data.env_name}_${algo.algo_name}_mlp_distract

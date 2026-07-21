@@ -522,7 +522,7 @@ if __name__ == "__main__":
         "--policy",
         type=str,
         default="bc_cardpol_policy",
-        choices=["bc_cardpol_policy", "bc_policy", "bc_ib_policy", "bc_vae_policy"],
+        choices=["bc_cardpol_policy", "bc_policy", "bc_ib_policy", "bc_vae_policy", "bc_curl_policy"],
         help="Policy package (default: bc_cardpol_policy).",
     )
     parser.add_argument(
@@ -559,7 +559,7 @@ if __name__ == "__main__":
     task_ids = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     rep_loss_scales = [0.0, 0.01, 0.001, 0.005]
     train_ratio = 0.9
-    n_epochs = 100
+    n_epochs = 50
 
     if cli.vae_baseline_sweep:
         modality_sets = [parse_modality_set(",".join(m)) for m in VAE_BASELINE_MODALITY_SETS]
