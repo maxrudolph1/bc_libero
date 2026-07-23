@@ -338,7 +338,8 @@ def build_cardpol_sweep_config(
     return config
 
 
-def build_vae_sweep_config(
+def _build_rep_baseline_sweep_config(
+    policy_name: str,
     *,
     env_name: str,
     task_id: int,
@@ -347,14 +348,14 @@ def build_vae_sweep_config(
     train_ratio: float,
     n_epochs: int,
     wandb_group: str,
-    wandb_project: str = "bc-vae-vilt",
+    wandb_project: str,
     modalities: List[str] = ("image", "proprio"),
     cameras: List[str] = ("agentview",),
     distract: bool = False,
     enable_rollout_during_train: bool = True,
     post_train_rollout: bool = True,
 ) -> Dict[str, Any]:
-    """Hydra sweep entry for bc_vae_policy (VAE representation baseline).
+    """Hydra sweep entry for VAE/CURL representation baselines.
 
     `modalities` selects observation inputs: 'image' only or 'image'+'proprio'.
     When ``distract=True``, uses ``<backbone>_distract`` configs (datasets_distract).
@@ -374,7 +375,7 @@ def build_vae_sweep_config(
         group_suffix += "_distract"
 
     config: Dict[str, Any] = {
-        "--config-path": policy_config_path("bc_vae_policy"),
+        "--config-path": policy_config_path(policy_name),
         "--config-name": resolved_config_name,
         "data.env_name": env_name,
         "data.train_ratio": train_ratio,
@@ -411,9 +412,85 @@ def build_vae_sweep_config(
     return config
 
 
-VAE_BASELINE_MODALITY_SETS = [["image"], ["image", "proprio"]]
-VAE_BASELINE_DISTRACT_VALUES = [False, True]
-VAE_BASELINE_SEEDS = [0, 1, 2, 3, 4]
+def build_vae_sweep_config(
+    *,
+    env_name: str,
+    task_id: int,
+    config_name: str,
+    seeds: List[int],
+    train_ratio: float,
+    n_epochs: int,
+    wandb_group: str,
+    wandb_project: str = "bc-vae-vilt",
+    modalities: List[str] = ("image", "proprio"),
+    cameras: List[str] = ("agentview",),
+    distract: bool = False,
+    enable_rollout_during_train: bool = True,
+    post_train_rollout: bool = True,
+) -> Dict[str, Any]:
+    """Hydra sweep entry for bc_vae_policy (VAE representation baseline)."""
+    return _build_rep_baseline_sweep_config(
+        "bc_vae_policy",
+        env_name=env_name,
+        task_id=task_id,
+        config_name=config_name,
+        seeds=seeds,
+        train_ratio=train_ratio,
+        n_epochs=n_epochs,
+        wandb_group=wandb_group,
+        wandb_project=wandb_project,
+        modalities=modalities,
+        cameras=cameras,
+        distract=distract,
+        enable_rollout_during_train=enable_rollout_during_train,
+        post_train_rollout=post_train_rollout,
+    )
+
+
+def build_curl_sweep_config(
+    *,
+    env_name: str,
+    task_id: int,
+    config_name: str,
+    seeds: List[int],
+    train_ratio: float,
+    n_epochs: int,
+    wandb_group: str,
+    wandb_project: str = "bc-curl-vilt",
+    modalities: List[str] = ("image", "proprio"),
+    cameras: List[str] = ("agentview",),
+    distract: bool = False,
+    enable_rollout_during_train: bool = True,
+    post_train_rollout: bool = True,
+) -> Dict[str, Any]:
+    """Hydra sweep entry for bc_curl_policy (CURL representation baseline)."""
+    return _build_rep_baseline_sweep_config(
+        "bc_curl_policy",
+        env_name=env_name,
+        task_id=task_id,
+        config_name=config_name,
+        seeds=seeds,
+        train_ratio=train_ratio,
+        n_epochs=n_epochs,
+        wandb_group=wandb_group,
+        wandb_project=wandb_project,
+        modalities=modalities,
+        cameras=cameras,
+        distract=distract,
+        enable_rollout_during_train=enable_rollout_during_train,
+        post_train_rollout=post_train_rollout,
+    )
+
+
+REP_BASELINE_MODALITY_SETS = [["image"]] #, ["image", "proprio"]]
+REP_BASELINE_DISTRACT_VALUES = [False, True]
+REP_BASELINE_SEEDS = [0, 1, 2, 3, 4]
+VAE_BASELINE_MODALITY_SETS = REP_BASELINE_MODALITY_SETS
+VAE_BASELINE_DISTRACT_VALUES = REP_BASELINE_DISTRACT_VALUES
+VAE_BASELINE_SEEDS = REP_BASELINE_SEEDS
+CURL_BASELINE_MODALITY_SETS = REP_BASELINE_MODALITY_SETS
+CURL_BASELINE_DISTRACT_VALUES = REP_BASELINE_DISTRACT_VALUES
+CURL_BASELINE_SEEDS = REP_BASELINE_SEEDS
 
 
 def build_bc_distract_sweep_config(
@@ -519,6 +596,14 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--curl-baseline-sweep",
+        action="store_true",
+        help=(
+            "Sweep bc_curl_policy baseline: modalities (image, image+proprio), "
+            "distractions (yes/no), seeds 0-4."
+        ),
+    )
+    parser.add_argument(
         "--policy",
         type=str,
         default="bc_cardpol_policy",
@@ -533,12 +618,18 @@ if __name__ == "__main__":
     )
     cli = parser.parse_args()
 
+    if cli.vae_baseline_sweep and cli.curl_baseline_sweep:
+        parser.error("Use at most one of --vae-baseline-sweep and --curl-baseline-sweep.")
+
+    rep_baseline_sweep = cli.vae_baseline_sweep or cli.curl_baseline_sweep
     if cli.vae_baseline_sweep:
         cli.policy = "bc_vae_policy"
+    elif cli.curl_baseline_sweep:
+        cli.policy = "bc_curl_policy"
 
     libero_envs = [
-        "libero_spatial",
-        # "libero_object",
+        # "libero_spatial",
+        "libero_object",
         # "libero_goal",
         # "libero_10", 
     ]
@@ -561,10 +652,10 @@ if __name__ == "__main__":
     train_ratio = 0.9
     n_epochs = 50
 
-    if cli.vae_baseline_sweep:
-        modality_sets = [parse_modality_set(",".join(m)) for m in VAE_BASELINE_MODALITY_SETS]
-        distract_values = VAE_BASELINE_DISTRACT_VALUES
-        seeds = VAE_BASELINE_SEEDS
+    if rep_baseline_sweep:
+        modality_sets = [parse_modality_set(",".join(m)) for m in REP_BASELINE_MODALITY_SETS]
+        distract_values = REP_BASELINE_DISTRACT_VALUES
+        seeds = REP_BASELINE_SEEDS
     else:
         modality_sets = [
             # ["image"],
@@ -578,16 +669,19 @@ if __name__ == "__main__":
         distract_values = [True] if cli.distract else [False]
 
     cameras = parse_camera_set(cli.cameras) if cli.cameras else list(DEFAULT_CAMERAS)
-    if (cli.distract or cli.vae_baseline_sweep) and "agentview" not in cameras:
+    if (cli.distract or rep_baseline_sweep) and "agentview" not in cameras:
         parser.error(
             "--distract requires the 'agentview' camera: the distractor is baked "
             "into agentview_rgb (datasets_distract) and applied to agentview at "
             "rollout, and the shape check expects agentview_rgb=(3,128,256)."
         )
 
-    if cli.vae_baseline_sweep:
+    if rep_baseline_sweep:
+        build_rep_baseline = (
+            build_vae_sweep_config if cli.vae_baseline_sweep else build_curl_sweep_config
+        )
         sweep_configs = [
-            build_vae_sweep_config(
+            build_rep_baseline(
                 env_name=env_name,
                 task_id=task_id,
                 config_name=cli.backbone,
@@ -668,3 +762,10 @@ if __name__ == "__main__":
 #   --job-name=libero-vae-baseline \
 #   --wandb-project=bc-vae-vilt \
 #   --wandb-group=bc-vae-baseline --num-runs-per-job 5
+#
+#     python launch_scripts/mll/submit_libero.py \
+#   --curl-baseline-sweep \
+#   --dry-run \
+#   --job-name=libero-curl-baseline \
+#   --wandb-project=bc-curl-vilt \
+#   --wandb-group=bc-curl-baseline --num-runs-per-job 5
