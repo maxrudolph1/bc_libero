@@ -557,7 +557,7 @@ if __name__ == "__main__":
 
     seeds = [0, 1, 2, 3, 4]
     task_ids = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    rep_loss_scales = [0.0, 0.01, 0.001, 0.005]
+    rep_loss_scales = [0.0, 0.01] #, 0.001, 0.005]
     train_ratio = 0.9
     n_epochs = 50
 
@@ -567,8 +567,8 @@ if __name__ == "__main__":
         seeds = VAE_BASELINE_SEEDS
     else:
         modality_sets = [
-            ["image"],
-            # ["image", "proprio"],
+            # ["image"],
+            ["image", "proprio"],
             # ["image", "proprio", "language"],
         ]
         if cli.modality_sets:
