@@ -4,7 +4,7 @@
 Rows flatten environment (goal, object, spatial), observation (img,
 img+proprio), and distraction (on/off). Columns are methods:
 Vanilla (CardPol with rep_loss_scale=0), CardPol with rep_loss_scale=0.01,
-and VAE.
+VAE, and CURL.
 
 Usage:
     python scripts/parse_method_env_table.py
@@ -41,6 +41,7 @@ DEFAULT_CSV_OUTPUT = SCRIPT_DIR / "method_env_table.csv"
 ENV_NAME_COL = "cfg/env/env_name"
 DISTRACTOR_COL = "cfg/data/distractor/enable"
 LOW_DIM_COL = "cfg/data/obs/modality/low_dim"
+DATA_MODALITY_COL = "cfg/data/data_modality"
 ALGO_NAME_COL = "cfg/algo/algo_name"
 REP_LOSS_COL = "cfg/train/rep_loss_scale"
 
@@ -61,11 +62,12 @@ DISTRACT_LABELS = {
 }
 DISTRACT_ORDER = [False, True]
 
-METHOD_ORDER = ["cardpol_base", "cardpol_rl", "vae"]
+METHOD_ORDER = ["cardpol_base", "cardpol_rl", "vae", "curl"]
 METHOD_LABELS = {
     "cardpol_base": "Vanilla",
     "cardpol_rl": "CardPol (RL=0.01)",
     "vae": "VAE",
+    "curl": "CURL",
 }
 
 ENV_NAME_MAP = {
@@ -92,7 +94,11 @@ def infer_environment(env_name: str) -> str | None:
     return ENV_NAME_MAP.get(str(env_name))
 
 
-def infer_observation(low_dim: object) -> str:
+def infer_observation(low_dim: object, data_modality: object = None) -> str:
+    if data_modality is not None and not pd.isna(data_modality):
+        if "proprio" in str(data_modality):
+            return "img+proprio"
+        return "img"
     low_dim_text = "" if pd.isna(low_dim) else str(low_dim)
     if "joint_states" in low_dim_text:
         return "img+proprio"
@@ -108,6 +114,8 @@ def infer_method(algo_name: str, rep_loss: float) -> str | None:
         return None
     if algo_name == "bc_vae_policy" and rep_loss == 1.0:
         return "vae"
+    if algo_name == "bc_curl_policy" and rep_loss == 1.0:
+        return "curl"
     return None
 
 
@@ -117,7 +125,16 @@ def prepare_runs(df: pd.DataFrame) -> pd.DataFrame:
     runs["success"] = pd.to_numeric(runs[SUCCESS_COL], errors="coerce")
     runs["rep_loss"] = pd.to_numeric(runs[REP_LOSS_COL], errors="coerce")
     runs["env"] = runs[ENV_NAME_COL].map(infer_environment)
-    runs["obs"] = runs[LOW_DIM_COL].map(infer_observation)
+    if DATA_MODALITY_COL in runs.columns:
+        runs["obs"] = [
+            infer_observation(low_dim, data_modality)
+            for low_dim, data_modality in zip(
+                runs[LOW_DIM_COL],
+                runs[DATA_MODALITY_COL],
+            )
+        ]
+    else:
+        runs["obs"] = runs[LOW_DIM_COL].map(infer_observation)
     runs["distract"] = runs[DISTRACTOR_COL].astype(bool)
     runs["method"] = [
         infer_method(algo, rep_loss)
@@ -131,50 +148,64 @@ def prepare_runs(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
 
-def mean_success_over_tasks_and_seeds(group: pd.DataFrame) -> float:
-    """Average success over seeds per task, then over tasks."""
+def success_stats_over_tasks_and_seeds(group: pd.DataFrame) -> tuple[float, float]:
+    """Average success over seeds per task, then mean and SEM over tasks."""
     per_task = group.groupby(TASK_ID_COL, dropna=False)["success"].mean()
-    return float(per_task.mean())
+    mean = float(per_task.mean())
+    if len(per_task) <= 1:
+        return mean, float("nan")
+    stderr = float(per_task.std(ddof=1) / (len(per_task) ** 0.5))
+    return mean, stderr
 
 
-def build_method_env_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Return a table indexed by env/obs/distract with method columns."""
+def build_method_env_tables(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return mean and SEM tables indexed by env/obs/distract with method columns."""
     runs = prepare_runs(df)
     records: list[dict[str, object]] = []
 
     grouped = runs.groupby(["env", "obs", "distract", "method"], dropna=False)
     for (env, obs, distract, method), group in grouped:
+        mean, stderr = success_stats_over_tasks_and_seeds(group)
         records.append(
             {
                 "env": env,
                 "obs": obs,
                 "distract": distract,
                 "method": method,
-                "mean_success": mean_success_over_tasks_and_seeds(group),
+                "mean_success": mean,
+                "stderr_success": stderr,
                 "num_runs": len(group),
             }
         )
 
     if not records:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
     long_df = pd.DataFrame(records)
-    table = long_df.pivot_table(
+    mean_table = long_df.pivot_table(
         index=["env", "obs", "distract"],
         columns="method",
         values="mean_success",
         aggfunc="first",
     )
-    table = table.reindex(
-        pd.MultiIndex.from_product(
-            [ENV_ORDER, OBS_ORDER, DISTRACT_ORDER],
-            names=["env", "obs", "distract"],
-        ),
+    stderr_table = long_df.pivot_table(
+        index=["env", "obs", "distract"],
+        columns="method",
+        values="stderr_success",
+        aggfunc="first",
     )
+    row_index = pd.MultiIndex.from_product(
+        [ENV_ORDER, OBS_ORDER, DISTRACT_ORDER],
+        names=["env", "obs", "distract"],
+    )
+    mean_table = mean_table.reindex(row_index)
+    stderr_table = stderr_table.reindex(row_index)
     for method in METHOD_ORDER:
-        if method not in table.columns:
-            table[method] = pd.NA
-    return table[METHOD_ORDER]
+        if method not in mean_table.columns:
+            mean_table[method] = pd.NA
+        if method not in stderr_table.columns:
+            stderr_table[method] = pd.NA
+    return mean_table[METHOD_ORDER], stderr_table[METHOD_ORDER]
 
 
 def _escape_latex_text(text: str) -> str:
@@ -191,18 +222,28 @@ def _escape_latex_text(text: str) -> str:
     return escaped
 
 
-def _format_latex_cell(value: float | None, bold: bool = False) -> str:
-    if value is None or pd.isna(value):
+def _format_latex_cell(
+    mean: float | None,
+    stderr: float | None = None,
+    *,
+    bold: bool = False,
+) -> str:
+    if mean is None or pd.isna(mean):
         return "--"
-    text = f"{float(value):.3f}"
+    mean_text = f"{float(mean):.3f}"
     if bold:
-        return f"\\textbf{{{text}}}"
-    return text
+        mean_text = f"\\textbf{{{mean_text}}}"
+    if stderr is None or pd.isna(stderr):
+        return mean_text
+    return f"{mean_text} $\\pm$ {float(stderr):.3f}"
 
 
-def format_method_env_latex_table(table: pd.DataFrame) -> str:
+def format_method_env_latex_table(
+    mean_table: pd.DataFrame,
+    stderr_table: pd.DataFrame,
+) -> str:
     """Render the method/environment summary as a LaTeX table."""
-    method_columns = [col for col in METHOD_ORDER if col in table.columns]
+    method_columns = [col for col in METHOD_ORDER if col in mean_table.columns]
     column_spec = "lll" + "c" * len(method_columns)
     header = " & ".join(
         [
@@ -214,12 +255,17 @@ def format_method_env_latex_table(table: pd.DataFrame) -> str:
     )
 
     body_lines: list[str] = []
-    for (env, obs, distract), row in table.iterrows():
-        rounded = row.round(3)
-        row_max = rounded.max(skipna=True)
+    for (env, obs, distract), mean_row in mean_table.iterrows():
+        stderr_row = stderr_table.loc[(env, obs, distract)]
+        rounded_means = mean_row.round(3)
+        row_max = rounded_means.max(skipna=True)
         cells = [
-            _format_latex_cell(value, pd.notna(value) and rounded.loc[col] == row_max)
-            for col, value in rounded.items()
+            _format_latex_cell(
+                mean_row[col],
+                stderr_row[col],
+                bold=pd.notna(mean_row[col]) and rounded_means.loc[col] == row_max,
+            )
+            for col in method_columns
         ]
         body_lines.append(
             " & ".join(
@@ -236,7 +282,7 @@ def format_method_env_latex_table(table: pd.DataFrame) -> str:
     body = "\n".join(body_lines)
     caption = (
         "Mean rollout success by environment setting (rows) and method (columns). "
-        "Each cell averages over tasks and seeds."
+        "Each cell averages over seeds per task, then reports mean $\\pm$ SEM across tasks."
     )
     return f"""\\begin{{table}}
 \\small
@@ -253,16 +299,23 @@ def format_method_env_latex_table(table: pd.DataFrame) -> str:
 """
 
 
-def table_to_csv(table: pd.DataFrame) -> pd.DataFrame:
+def table_to_csv(
+    mean_table: pd.DataFrame,
+    stderr_table: pd.DataFrame,
+) -> pd.DataFrame:
     """Flatten the MultiIndex rows for CSV export."""
-    flat = table.copy()
+    flat = mean_table.copy()
     flat.index = [
         f"{ENV_LABELS[str(env)]}|{OBS_LABELS[str(obs)]}|{DISTRACT_LABELS[bool(distract)]}"
         for env, obs, distract in flat.index
     ]
     flat.columns = [METHOD_LABELS[col] for col in flat.columns]
     flat.index.name = "env|obs|distract"
-    return flat
+
+    stderr_flat = stderr_table.copy()
+    stderr_flat.index = flat.index
+    stderr_flat.columns = [f"{METHOD_LABELS[col]}_stderr" for col in stderr_flat.columns]
+    return flat.join(stderr_flat)
 
 
 def main() -> None:
@@ -326,8 +379,8 @@ def main() -> None:
         print("No runs found to summarize.", file=sys.stderr)
         sys.exit(1)
 
-    table = build_method_env_table(df)
-    if table.empty:
+    mean_table, stderr_table = build_method_env_tables(df)
+    if mean_table.empty:
         print("No matching runs found for method/environment table.", file=sys.stderr)
         sys.exit(1)
 
@@ -335,16 +388,20 @@ def main() -> None:
         f"% Generated by scripts/parse_method_env_table.py on "
         f"{datetime.now(timezone.utc).astimezone().isoformat()}\n"
     )
-    latex = header + format_method_env_latex_table(table) + "\n"
+    latex = header + format_method_env_latex_table(mean_table, stderr_table) + "\n"
 
-    print(f"Built table with {len(table)} row(s) and {len(table.columns)} method column(s)", file=sys.stderr)
+    print(
+        f"Built table with {len(mean_table)} row(s) and "
+        f"{len(mean_table.columns)} method column(s)",
+        file=sys.stderr,
+    )
 
     if not args.no_csv_file:
         csv_path = args.csv_output
         if not csv_path.is_absolute():
             csv_path = REPO_ROOT / csv_path
         csv_path.parent.mkdir(parents=True, exist_ok=True)
-        table_to_csv(table).to_csv(csv_path)
+        table_to_csv(mean_table, stderr_table).to_csv(csv_path)
         print(f"Wrote {csv_path}", file=sys.stderr)
 
     if args.print:

@@ -629,8 +629,8 @@ if __name__ == "__main__":
 
     libero_envs = [
         # "libero_spatial",
-        "libero_object",
-        # "libero_goal",
+        # "libero_object",
+        "libero_goal",
         # "libero_10", 
     ]
 
