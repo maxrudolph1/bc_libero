@@ -60,6 +60,7 @@ class BC_CARDPOL_Policy(BaseAlgo):
             focused_task_id=cfg.data.dual_task.focused_task_id,
             future_step_min=cfg.data.dual_task.future_step_min,
             future_step_max=cfg.data.dual_task.future_step_max,
+            mixed_mode=cfg.data.dual_task.get("mixed_mode", "future_pair"),
         )
         return DataLoader(
             val_dataset,

@@ -182,6 +182,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
                 focused_task_id=cfg.data.dual_task.focused_task_id,
                 future_step_min=cfg.data.dual_task.future_step_min,
                 future_step_max=cfg.data.dual_task.future_step_max,
+                mixed_mode=cfg.data.dual_task.get("mixed_mode", "future_pair"),
             )
             train_collate_fn = collate_dual_task_batch
             print(

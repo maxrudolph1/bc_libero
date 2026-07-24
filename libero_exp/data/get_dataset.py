@@ -197,12 +197,15 @@ class DualTaskBatchDataset(Dataset):
         obs, obs_future, task_emb, task_id, future_step_k
     """
 
+    _MIXED_MODES = ("future_pair", "vip")
+
     def __init__(
         self,
         task_datasets,
         focused_task_id=0,
         future_step_min=1,
         future_step_max=10,
+        mixed_mode="future_pair",
     ):
         if not task_datasets:
             raise ValueError("task_datasets must be a non-empty list of per-task datasets")
@@ -218,6 +221,10 @@ class DualTaskBatchDataset(Dataset):
                 f"future_step_max ({future_step_max}) must be >= "
                 f"future_step_min ({future_step_min})"
             )
+        if mixed_mode not in self._MIXED_MODES:
+            raise ValueError(
+                f"mixed_mode must be one of {self._MIXED_MODES}, got {mixed_mode!r}"
+            )
 
         self.task_datasets = task_datasets
         self.focused_task_id = focused_task_id
@@ -227,6 +234,7 @@ class DualTaskBatchDataset(Dataset):
         self._mixed_pool_size = len(self.all_tasks_dataset)
         self.future_step_min = future_step_min
         self.future_step_max = future_step_max
+        self.mixed_mode = mixed_mode
         self._concat_cumulative_sizes = self.all_tasks_dataset.cumulative_sizes
 
     def __len__(self):
@@ -273,13 +281,60 @@ class DualTaskBatchDataset(Dataset):
             "future_step_k": actual_k,
         }
 
+    def _build_mixed_vip_frames(self, concat_idx, rng):
+        """Sample a VIP training tuple (o_0, g, o_t, o_{t+1}) from one trajectory.
+
+        Mirrors the sub-trajectory sampling in facebookresearch/vip: an initial
+        frame ``o_0`` (start_ind), a goal frame ``g`` (end_ind >= start_ind), and a
+        single-step transition (``o_t``, ``o_{t+1}``) with start_ind <= t < t+1 <= g.
+        The self-supervised goal-reaching reward is R(s; g) = (s == g) - 1, i.e. -1
+        for every non-goal state (VIP's constant living penalty).
+        """
+        task_id, local_idx, vl_dataset = self._resolve_concat_index(concat_idx)
+        seq_dataset = vl_dataset.sequence_dataset
+        _, index_in_demo, demo_length = seq_dataset.get_index_location(local_idx)
+
+        last = demo_length - 1
+        if demo_length <= 2:
+            start_ind, end_ind = 0, last
+        else:
+            start_ind = int(rng.randint(0, demo_length - 2))        # [0, L-3]
+            end_ind = int(rng.randint(start_ind + 1, demo_length))  # [start+1, L-1]
+        if end_ind > start_ind:
+            s0_ind = int(rng.randint(start_ind, end_ind))           # [start_ind, end_ind-1]
+        else:
+            s0_ind = start_ind
+        s1_ind = min(s0_ind + 1, end_ind)
+
+        reward = np.float32(float(s0_ind == end_ind) - 1.0)
+
+        def _obs_at(abs_idx):
+            return seq_dataset.get_single_obs(
+                local_idx, timestep_offset=abs_idx - index_in_demo
+            )
+
+        return {
+            "obs": _obs_at(s0_ind),             # o_t
+            "obs_next": _obs_at(s1_ind),        # o_{t+1}
+            "obs_initial": _obs_at(start_ind),  # o_0
+            "obs_goal": _obs_at(end_ind),       # g
+            "reward": reward,
+            "task_emb": vl_dataset.task_emb,
+            "task_id": task_id,
+        }
+
+    def _build_mixed_sample(self, concat_idx, rng):
+        if self.mixed_mode == "vip":
+            return self._build_mixed_vip_frames(concat_idx, rng)
+        return self._build_mixed_future_pair(concat_idx, rng)
+
     def __getitem__(self, idx):
         focused_idx = idx % len(self.focused_dataset)
         mixed_idx = self._sample_mixed_index()
         rng = np.random.RandomState(seed=(int(idx) + 1) * 9973 + int(mixed_idx))
         return {
             "focused": self.focused_dataset[focused_idx],
-            "mixed": self._build_mixed_future_pair(mixed_idx, rng),
+            "mixed": self._build_mixed_sample(mixed_idx, rng),
         }
 
 

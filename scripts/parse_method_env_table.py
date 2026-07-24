@@ -62,12 +62,13 @@ DISTRACT_LABELS = {
 }
 DISTRACT_ORDER = [False, True]
 
-METHOD_ORDER = ["cardpol_base", "cardpol_rl", "vae", "curl"]
+METHOD_ORDER = ["cardpol_base", "cardpol_rl", "vae", "curl", "vip"]
 METHOD_LABELS = {
     "cardpol_base": "Vanilla",
     "cardpol_rl": "CardPol (RL=0.01)",
     "vae": "VAE",
     "curl": "CURL",
+    "vip": "VIP",
 }
 
 ENV_NAME_MAP = {
@@ -116,6 +117,8 @@ def infer_method(algo_name: str, rep_loss: float) -> str | None:
         return "vae"
     if algo_name == "bc_curl_policy" and rep_loss == 1.0:
         return "curl"
+    if algo_name == "bc_vip_policy" and rep_loss == 1.0:
+        return "vip"
     return None
 
 

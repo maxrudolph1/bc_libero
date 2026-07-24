@@ -50,3 +50,4 @@ dual_task:
   focused_task_id: 0                # benchmark task index for the "focused" batch
   future_step_min: 1                # min K for mixed-batch (obs_t, obs_{t+K}) pairs
   future_step_max: 10               # max K (inclusive); sampled uniformly per example
+  mixed_mode: future_pair           # mixed-batch sampling: "future_pair" or "vip" (o_0, g, o_t, o_{t+1})

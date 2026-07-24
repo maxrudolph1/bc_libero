@@ -354,10 +354,12 @@ def _build_rep_baseline_sweep_config(
     distract: bool = False,
     enable_rollout_during_train: bool = True,
     post_train_rollout: bool = True,
+    mixed_mode: str = "future_pair",
 ) -> Dict[str, Any]:
-    """Hydra sweep entry for VAE/CURL representation baselines.
+    """Hydra sweep entry for VAE/CURL/VIP representation baselines.
 
     `modalities` selects observation inputs: 'image' only or 'image'+'proprio'.
+    `mixed_mode` selects the dual-task mixed-batch sampler ('future_pair' or 'vip').
     When ``distract=True``, uses ``<backbone>_distract`` configs (datasets_distract).
     """
     modalities = list(modalities)
@@ -386,6 +388,7 @@ def _build_rep_baseline_sweep_config(
         "data.dual_task.focused_task_id": task_id,
         "data.dual_task.future_step_min": 1,
         "data.dual_task.future_step_max": 10,
+        "data.dual_task.mixed_mode": mixed_mode,
         "policy.use_language_conditioning": "false",
         "env.task_id": [task_id],
         "wandb.project": wandb_project,
@@ -482,6 +485,42 @@ def build_curl_sweep_config(
     )
 
 
+def build_vip_sweep_config(
+    *,
+    env_name: str,
+    task_id: int,
+    config_name: str,
+    seeds: List[int],
+    train_ratio: float,
+    n_epochs: int,
+    wandb_group: str,
+    wandb_project: str = "bc-vip-vilt",
+    modalities: List[str] = ("image", "proprio"),
+    cameras: List[str] = ("agentview",),
+    distract: bool = False,
+    enable_rollout_during_train: bool = True,
+    post_train_rollout: bool = True,
+) -> Dict[str, Any]:
+    """Hydra sweep entry for bc_vip_policy (VIP representation baseline)."""
+    return _build_rep_baseline_sweep_config(
+        "bc_vip_policy",
+        env_name=env_name,
+        task_id=task_id,
+        config_name=config_name,
+        seeds=seeds,
+        train_ratio=train_ratio,
+        n_epochs=n_epochs,
+        wandb_group=wandb_group,
+        wandb_project=wandb_project,
+        modalities=modalities,
+        cameras=cameras,
+        distract=distract,
+        enable_rollout_during_train=enable_rollout_during_train,
+        post_train_rollout=post_train_rollout,
+        mixed_mode="vip",
+    )
+
+
 REP_BASELINE_MODALITY_SETS = [["image"]] #, ["image", "proprio"]]
 REP_BASELINE_DISTRACT_VALUES = [False, True]
 REP_BASELINE_SEEDS = [0, 1, 2, 3, 4]
@@ -491,6 +530,9 @@ VAE_BASELINE_SEEDS = REP_BASELINE_SEEDS
 CURL_BASELINE_MODALITY_SETS = REP_BASELINE_MODALITY_SETS
 CURL_BASELINE_DISTRACT_VALUES = REP_BASELINE_DISTRACT_VALUES
 CURL_BASELINE_SEEDS = REP_BASELINE_SEEDS
+VIP_BASELINE_MODALITY_SETS = REP_BASELINE_MODALITY_SETS
+VIP_BASELINE_DISTRACT_VALUES = REP_BASELINE_DISTRACT_VALUES
+VIP_BASELINE_SEEDS = REP_BASELINE_SEEDS
 
 
 def build_bc_distract_sweep_config(
@@ -604,10 +646,25 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--vip-baseline-sweep",
+        action="store_true",
+        help=(
+            "Sweep bc_vip_policy baseline: modalities (image, image+proprio), "
+            "distractions (yes/no), seeds 0-4."
+        ),
+    )
+    parser.add_argument(
         "--policy",
         type=str,
         default="bc_cardpol_policy",
-        choices=["bc_cardpol_policy", "bc_policy", "bc_ib_policy", "bc_vae_policy", "bc_curl_policy"],
+        choices=[
+            "bc_cardpol_policy",
+            "bc_policy",
+            "bc_ib_policy",
+            "bc_vae_policy",
+            "bc_curl_policy",
+            "bc_vip_policy",
+        ],
         help="Policy package (default: bc_cardpol_policy).",
     )
     parser.add_argument(
@@ -618,14 +675,21 @@ if __name__ == "__main__":
     )
     cli = parser.parse_args()
 
-    if cli.vae_baseline_sweep and cli.curl_baseline_sweep:
-        parser.error("Use at most one of --vae-baseline-sweep and --curl-baseline-sweep.")
+    if sum([cli.vae_baseline_sweep, cli.curl_baseline_sweep, cli.vip_baseline_sweep]) > 1:
+        parser.error(
+            "Use at most one of --vae-baseline-sweep, --curl-baseline-sweep, "
+            "and --vip-baseline-sweep."
+        )
 
-    rep_baseline_sweep = cli.vae_baseline_sweep or cli.curl_baseline_sweep
+    rep_baseline_sweep = (
+        cli.vae_baseline_sweep or cli.curl_baseline_sweep or cli.vip_baseline_sweep
+    )
     if cli.vae_baseline_sweep:
         cli.policy = "bc_vae_policy"
     elif cli.curl_baseline_sweep:
         cli.policy = "bc_curl_policy"
+    elif cli.vip_baseline_sweep:
+        cli.policy = "bc_vip_policy"
 
     libero_envs = [
         # "libero_spatial",
@@ -677,9 +741,12 @@ if __name__ == "__main__":
         )
 
     if rep_baseline_sweep:
-        build_rep_baseline = (
-            build_vae_sweep_config if cli.vae_baseline_sweep else build_curl_sweep_config
-        )
+        if cli.vae_baseline_sweep:
+            build_rep_baseline = build_vae_sweep_config
+        elif cli.curl_baseline_sweep:
+            build_rep_baseline = build_curl_sweep_config
+        else:
+            build_rep_baseline = build_vip_sweep_config
         sweep_configs = [
             build_rep_baseline(
                 env_name=env_name,
@@ -769,3 +836,10 @@ if __name__ == "__main__":
 #   --job-name=libero-curl-baseline \
 #   --wandb-project=bc-curl-vilt \
 #   --wandb-group=bc-curl-baseline --num-runs-per-job 5
+#
+#     python launch_scripts/mll/submit_libero.py \
+#   --vip-baseline-sweep \
+#   --dry-run \
+#   --job-name=libero-vip-baseline \
+#   --wandb-project=bc-vip-vilt \
+#   --wandb-group=bc-vip-baseline --num-runs-per-job 5
