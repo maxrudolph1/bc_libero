@@ -355,11 +355,13 @@ def _build_rep_baseline_sweep_config(
     enable_rollout_during_train: bool = True,
     post_train_rollout: bool = True,
     mixed_mode: str = "future_pair",
+    rep_loss_scale: Any = None,
 ) -> Dict[str, Any]:
     """Hydra sweep entry for VAE/CURL/VIP representation baselines.
 
     `modalities` selects observation inputs: 'image' only or 'image'+'proprio'.
     `mixed_mode` selects the dual-task mixed-batch sampler ('future_pair' or 'vip').
+    `rep_loss_scale` overrides train.rep_loss_scale; pass a list to sweep it.
     When ``distract=True``, uses ``<backbone>_distract`` configs (datasets_distract).
     """
     modalities = list(modalities)
@@ -396,6 +398,9 @@ def _build_rep_baseline_sweep_config(
         "wandb.policy_arch": resolved_config_name,
     }
 
+    if rep_loss_scale is not None:
+        config["train.rep_loss_scale"] = rep_loss_scale
+
     if distract:
         config["eval.enable_rollout"] = str(enable_rollout_during_train).lower()
         config["eval.post_train_rollout.enable"] = str(post_train_rollout).lower()
@@ -430,6 +435,7 @@ def build_vae_sweep_config(
     distract: bool = False,
     enable_rollout_during_train: bool = True,
     post_train_rollout: bool = True,
+    rep_loss_scale: Any = None,
 ) -> Dict[str, Any]:
     """Hydra sweep entry for bc_vae_policy (VAE representation baseline)."""
     return _build_rep_baseline_sweep_config(
@@ -447,6 +453,7 @@ def build_vae_sweep_config(
         distract=distract,
         enable_rollout_during_train=enable_rollout_during_train,
         post_train_rollout=post_train_rollout,
+        rep_loss_scale=rep_loss_scale,
     )
 
 
@@ -465,6 +472,7 @@ def build_curl_sweep_config(
     distract: bool = False,
     enable_rollout_during_train: bool = True,
     post_train_rollout: bool = True,
+    rep_loss_scale: Any = None,
 ) -> Dict[str, Any]:
     """Hydra sweep entry for bc_curl_policy (CURL representation baseline)."""
     return _build_rep_baseline_sweep_config(
@@ -482,6 +490,7 @@ def build_curl_sweep_config(
         distract=distract,
         enable_rollout_during_train=enable_rollout_during_train,
         post_train_rollout=post_train_rollout,
+        rep_loss_scale=rep_loss_scale,
     )
 
 
@@ -500,6 +509,7 @@ def build_vip_sweep_config(
     distract: bool = False,
     enable_rollout_during_train: bool = True,
     post_train_rollout: bool = True,
+    rep_loss_scale: Any = None,
 ) -> Dict[str, Any]:
     """Hydra sweep entry for bc_vip_policy (VIP representation baseline)."""
     return _build_rep_baseline_sweep_config(
@@ -518,6 +528,7 @@ def build_vip_sweep_config(
         enable_rollout_during_train=enable_rollout_during_train,
         post_train_rollout=post_train_rollout,
         mixed_mode="vip",
+        rep_loss_scale=rep_loss_scale,
     )
 
 
@@ -673,7 +684,51 @@ if __name__ == "__main__":
         default="vilt",
         help="Backbone config name; with --distract uses <backbone>_distract.yaml (default: vilt).",
     )
+    parser.add_argument(
+        "--rep-loss-scales",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated train.rep_loss_scale values to sweep for VAE/CURL/VIP "
+            "baselines (e.g. '0.5,0.1,0.01,0.001'). Default: use the config value."
+        ),
+    )
+    parser.add_argument(
+        "--task-ids",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated task ids to sweep (e.g. '0'). Default: all 10 tasks "
+            "for baseline/cardpol sweeps."
+        ),
+    )
+    parser.add_argument(
+        "--distract-values",
+        type=str,
+        default=None,
+        choices=["off", "on", "both"],
+        help=(
+            "For VAE/CURL/VIP baseline sweeps, choose distraction settings to sweep: "
+            "'off' (no distractor), 'on' (distractor), or 'both'. "
+            "Default: honor --distract (off unless --distract is set)."
+        ),
+    )
     cli = parser.parse_args()
+
+    distract_values_cli = {
+        "off": [False],
+        "on": [True],
+        "both": [False, True],
+    }.get(cli.distract_values)
+
+    rep_loss_scales_cli = (
+        [float(x) for x in cli.rep_loss_scales.split(",")]
+        if cli.rep_loss_scales
+        else None
+    )
+    task_ids_cli = (
+        [int(x) for x in cli.task_ids.split(",")] if cli.task_ids else None
+    )
 
     if sum([cli.vae_baseline_sweep, cli.curl_baseline_sweep, cli.vip_baseline_sweep]) > 1:
         parser.error(
@@ -711,14 +766,18 @@ if __name__ == "__main__":
     ]
 
     seeds = [0, 1, 2, 3, 4]
-    task_ids = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    task_ids = task_ids_cli if task_ids_cli is not None else [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     rep_loss_scales = [0.0, 0.01] #, 0.001, 0.005]
     train_ratio = 0.9
     n_epochs = 50
 
     if rep_baseline_sweep:
         modality_sets = [parse_modality_set(",".join(m)) for m in REP_BASELINE_MODALITY_SETS]
-        distract_values = REP_BASELINE_DISTRACT_VALUES
+        distract_values = (
+            distract_values_cli
+            if distract_values_cli is not None
+            else ([True] if cli.distract else [False])
+        )
         seeds = REP_BASELINE_SEEDS
     else:
         modality_sets = [
@@ -760,6 +819,7 @@ if __name__ == "__main__":
                 modalities=modalities,
                 cameras=cameras,
                 distract=distract,
+                rep_loss_scale=rep_loss_scales_cli,
             )
             for env_name in libero_envs
             for task_id in task_ids

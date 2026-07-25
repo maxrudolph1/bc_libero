@@ -19,7 +19,7 @@ data:
     mixed_mode: vip
 
 train:
-  rep_loss_scale: 1.0
+  rep_loss_scale: 0.1
   vip_embed_dim: 1024
   vip_hidden_dim: 256
   vip_gamma: 0.98
