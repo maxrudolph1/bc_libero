@@ -14,6 +14,7 @@ import argparse
 import copy
 import itertools
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -51,6 +52,46 @@ echo "Running on node: $(hostname)"
 echo "Job ended at $(date)"
 """
 
+SLURM_ARRAY_TEMPLATE = """#!/bin/bash
+#SBATCH --job-name={job_name}
+#SBATCH --output={array_dir}/logs/task_%A_%a.out
+#SBATCH --error={array_dir}/logs/task_%A_%a.err
+#SBATCH --partition={partition}
+{exclude_directive}#SBATCH --gres=gpu:{gpus}
+#SBATCH --cpus-per-task={cpus}
+#SBATCH --mem={mem}
+#SBATCH --time={time_limit}
+#SBATCH --array={array_spec}
+
+source ~/.bashrc
+cd {repo_root}
+source .venv/bin/activate
+
+export MUJOCO_GL=osmesa
+export PYOPENGL_PLATFORM=osmesa
+export TOKENIZERS_PARALLELISM=false
+
+TASK_SCRIPT="{array_dir}/tasks/${{SLURM_ARRAY_TASK_ID}}.sh"
+if [[ ! -f "${{TASK_SCRIPT}}" ]]; then
+  echo "ERROR: missing task script ${{TASK_SCRIPT}}" >&2
+  exit 1
+fi
+
+echo "MUJOCO_GL=$MUJOCO_GL"
+echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
+echo "SLURM_JOB_NODELIST=$SLURM_JOB_NODELIST"
+echo "SLURM_ARRAY_JOB_ID=${{SLURM_ARRAY_JOB_ID:-}} SLURM_ARRAY_TASK_ID=${{SLURM_ARRAY_TASK_ID}}"
+echo "Job started at $(date)"
+echo "Running on node: $(hostname)"
+echo "Executing ${{TASK_SCRIPT}}"
+
+bash "${{TASK_SCRIPT}}"
+status=$?
+
+echo "Job ended at $(date) with status ${{status}}"
+exit ${{status}}
+"""
+
 
 def from_sweep_config_to_config(sweep_config: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
     """Expand list-valued keys in sweep_config to all combinations."""
@@ -83,6 +124,32 @@ def build_train_command(
     return f"{train_script} {config_to_cli_args(config)}"
 
 
+def _sbatch(script_path: Path, *, dry_run: bool, script_text: str) -> Optional[int]:
+    if dry_run:
+        print("########  DRY RUN  ##########")
+        print(script_text)
+        print("#############################")
+        print()
+        return None
+
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    script_path.write_text(script_text)
+
+    result = subprocess.run(
+        ["sbatch", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    print("sbatch stdout:", result.stdout.strip())
+    if result.stderr:
+        print("sbatch stderr:", result.stderr.strip())
+    if result.returncode != 0:
+        raise RuntimeError(f"sbatch failed with exit code {result.returncode}")
+
+    return int(result.stdout.strip().split()[-1])
+
+
 def submit_slurm_job(
     run_commands: str,
     *,
@@ -109,32 +176,86 @@ def submit_slurm_job(
         run_commands=run_commands,
     )
 
-    if dry_run:
-        print("########  DRY RUN  ##########")
-        print(slurm_script)
-        print("#############################")
-        print()
+    jid = _sbatch(SLURM_TEMP_SCRIPT, dry_run=dry_run, script_text=slurm_script)
+    if jid is None:
         return None
 
-    SLURM_TEMP_SCRIPT.parent.mkdir(parents=True, exist_ok=True)
-    SLURM_TEMP_SCRIPT.write_text(slurm_script)
-
-    result = subprocess.run(
-        ["sbatch", str(SLURM_TEMP_SCRIPT)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    print("sbatch stdout:", result.stdout.strip())
-    if result.stderr:
-        print("sbatch stderr:", result.stderr.strip())
-    if result.returncode != 0:
-        raise RuntimeError(f"sbatch failed with exit code {result.returncode}")
-
-    jid = int(result.stdout.strip().split()[-1])
     job_dir = SLURM_LOG_ROOT / f"job_{jid}"
     job_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / "submission.sh").write_text(slurm_script)
+    return jid
+
+
+def submit_slurm_array_job(
+    task_commands: List[str],
+    *,
+    dry_run: bool,
+    job_name: str = "libero-train",
+    partition: str = "allnodes",
+    exclude: str = DEFAULT_SLURM_EXCLUDE,
+    gpus: int = 1,
+    cpus: int = 16,
+    mem: str = "768GB",
+    time_limit: str = "8:00:00",
+    array_max_parallel: Optional[int] = None,
+) -> Optional[int]:
+    """Submit one Slurm array job; each array index runs one task script."""
+    if not task_commands:
+        print("# No runs to submit")
+        return None
+
+    n_tasks = len(task_commands)
+    array_spec = f"0-{n_tasks - 1}"
+    if array_max_parallel is not None:
+        if array_max_parallel < 1:
+            raise ValueError(f"array_max_parallel must be >= 1, got {array_max_parallel}")
+        array_spec = f"{array_spec}%{array_max_parallel}"
+
+    # Materialize task scripts before sbatch so array workers can find them.
+    array_dir = SLURM_LOG_ROOT / "array_staging"
+    if not dry_run:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        array_dir = SLURM_LOG_ROOT / f"array_{stamp}"
+        tasks_dir = array_dir / "tasks"
+        logs_dir = array_dir / "logs"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        for i, commands in enumerate(task_commands):
+            (tasks_dir / f"{i}.sh").write_text(
+                "#!/bin/bash\nset -euo pipefail\n" + commands + "\n"
+            )
+
+    exclude_directive = f"#SBATCH --exclude={exclude}\n" if exclude else ""
+    slurm_script = SLURM_ARRAY_TEMPLATE.format(
+        job_name=job_name,
+        array_dir=array_dir,
+        partition=partition,
+        exclude_directive=exclude_directive,
+        gpus=gpus,
+        cpus=cpus,
+        mem=mem,
+        time_limit=time_limit,
+        array_spec=array_spec,
+        repo_root=REPO_ROOT,
+    )
+
+    if dry_run:
+        print("########  DRY RUN (ARRAY)  ##########")
+        print(f"# array tasks: {n_tasks}  spec: --array={array_spec}")
+        print(f"# staging dir (on submit): {SLURM_LOG_ROOT}/array_<timestamp>/")
+        print(slurm_script)
+        print("########  sample task 0  ##########")
+        print(task_commands[0])
+        if n_tasks > 1:
+            print("########  sample task last  ##########")
+            print(task_commands[-1])
+        print("###################################")
+        print()
+        return None
+
+    script_path = array_dir / "submission.sh"
+    jid = _sbatch(script_path, dry_run=False, script_text=slurm_script)
+    print(f"# Array job {jid}: {n_tasks} tasks at {array_dir}")
     return jid
 
 
@@ -151,6 +272,8 @@ def main(
     cpus: int = 16,
     mem: str = "768GB",
     time_limit: str = "8:00:00",
+    use_array: bool = False,
+    array_max_parallel: Optional[int] = None,
 ) -> None:
     if sweep_configs is None:
         sweep_configs = []
@@ -159,10 +282,34 @@ def main(
     for sweep_config in sweep_configs:
         configs.extend(from_sweep_config_to_config(sweep_config))
 
-    num_jobs = (len(configs) + num_runs_per_job - 1) // num_runs_per_job
+    task_commands: List[str] = []
     for start in range(0, len(configs), num_runs_per_job):
         batch = configs[start : start + num_runs_per_job]
-        commands = "\n".join(build_train_command(cfg, train_script=train_script) for cfg in batch)
+        task_commands.append(
+            "\n".join(build_train_command(cfg, train_script=train_script) for cfg in batch)
+        )
+    num_tasks = len(task_commands)
+
+    if use_array:
+        submit_slurm_array_job(
+            task_commands,
+            dry_run=dry_run,
+            job_name=job_name,
+            partition=partition,
+            exclude=exclude,
+            gpus=gpus,
+            cpus=cpus,
+            mem=mem,
+            time_limit=time_limit,
+            array_max_parallel=array_max_parallel,
+        )
+        print(
+            f"# {'Would submit' if dry_run else 'Submitted'} 1 array job "
+            f"({num_tasks} tasks, {len(configs)} runs)"
+        )
+        return
+
+    for commands in task_commands:
         submit_slurm_job(
             commands,
             dry_run=dry_run,
@@ -175,7 +322,7 @@ def main(
             time_limit=time_limit,
         )
 
-    print(f"# {'Would submit' if dry_run else 'Submitted'} {num_jobs} jobs ({len(configs)} runs)")
+    print(f"# {'Would submit' if dry_run else 'Submitted'} {num_tasks} jobs ({len(configs)} runs)")
 
 
 def policy_config_path(policy_name: str) -> str:
@@ -586,7 +733,24 @@ def build_bc_distract_sweep_config(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Submit LIBERO Hydra training jobs via sbatch.")
     parser.add_argument("--dry-run", action="store_true", help="Print Slurm scripts without submitting.")
-    parser.add_argument("--num-runs-per-job", type=int, default=1, help="Sequential runs per Slurm job.")
+    parser.add_argument("--num-runs-per-job", type=int, default=1, help="Sequential runs per Slurm job/array task.")
+    parser.add_argument(
+        "--array",
+        action="store_true",
+        help=(
+            "Submit one Slurm array job instead of many independent jobs. "
+            "Each array index runs num-runs-per-job sequential trainings."
+        ),
+    )
+    parser.add_argument(
+        "--array-max-parallel",
+        type=int,
+        default=None,
+        help=(
+            "Optional concurrency cap for --array (Slurm %%N syntax), e.g. 8 "
+            "runs at most 8 array tasks at once."
+        ),
+    )
     parser.add_argument("--job-name", type=str, default="libero-train")
     parser.add_argument("--partition", type=str, default="allnodes")
     parser.add_argument(
@@ -879,6 +1043,9 @@ if __name__ == "__main__":
             for modalities in modality_sets
         ]
 
+    if cli.array_max_parallel is not None and not cli.array:
+        parser.error("--array-max-parallel requires --array")
+
     main(
         cli.dry_run,
         sweep_configs,
@@ -890,31 +1057,6 @@ if __name__ == "__main__":
         cpus=cli.cpus,
         mem=cli.mem,
         time_limit=cli.time_limit,
+        use_array=cli.array,
+        array_max_parallel=cli.array_max_parallel,
     )
-    
-#     python launch_scripts/mll/submit_libero.py \
-#   --distract \
-#   --job-name=libero-vilt-distract \
-#   --wandb-project=bc-ib-vilt-distract \
-#   --wandb-group=bc-vilt-distract --num-runs-per-job 6
-#
-#     python launch_scripts/mll/submit_libero.py \
-#   --vae-baseline-sweep \
-#   --dry-run \
-#   --job-name=libero-vae-baseline \
-#   --wandb-project=bc-vae-vilt \
-#   --wandb-group=bc-vae-baseline --num-runs-per-job 5
-#
-#     python launch_scripts/mll/submit_libero.py \
-#   --curl-baseline-sweep \
-#   --dry-run \
-#   --job-name=libero-curl-baseline \
-#   --wandb-project=bc-curl-vilt \
-#   --wandb-group=bc-curl-baseline --num-runs-per-job 5
-#
-#     python launch_scripts/mll/submit_libero.py \
-#   --vip-baseline-sweep \
-#   --dry-run \
-#   --job-name=libero-vip-baseline \
-#   --wandb-project=bc-vip-vilt \
-#   --wandb-group=bc-vip-baseline --num-runs-per-job 5
