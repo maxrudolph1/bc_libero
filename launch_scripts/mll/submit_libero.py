@@ -713,6 +713,16 @@ if __name__ == "__main__":
             "Default: honor --distract (off unless --distract is set)."
         ),
     )
+    parser.add_argument(
+        "--envs",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated LIBERO env names to sweep "
+            "(e.g. 'libero_goal,libero_object,libero_spatial'). "
+            "Default: the libero_envs list hardcoded in __main__."
+        ),
+    )
     cli = parser.parse_args()
 
     distract_values_cli = {
@@ -720,6 +730,11 @@ if __name__ == "__main__":
         "on": [True],
         "both": [False, True],
     }.get(cli.distract_values)
+    envs_cli = (
+        [x.strip() for x in cli.envs.split(",") if x.strip()]
+        if cli.envs
+        else None
+    )
 
     rep_loss_scales_cli = (
         [float(x) for x in cli.rep_loss_scales.split(",")]
@@ -746,11 +761,11 @@ if __name__ == "__main__":
     elif cli.vip_baseline_sweep:
         cli.policy = "bc_vip_policy"
 
-    libero_envs = [
+    libero_envs = envs_cli if envs_cli is not None else [
         # "libero_spatial",
         # "libero_object",
         "libero_goal",
-        # "libero_10", 
+        # "libero_10",
     ]
 
     policies = [cli.policy] if cli.distract else [

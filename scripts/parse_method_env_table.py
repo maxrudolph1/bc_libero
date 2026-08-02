@@ -44,6 +44,10 @@ LOW_DIM_COL = "cfg/data/obs/modality/low_dim"
 DATA_MODALITY_COL = "cfg/data/data_modality"
 ALGO_NAME_COL = "cfg/algo/algo_name"
 REP_LOSS_COL = "cfg/train/rep_loss_scale"
+EXPERIMENT_GROUP_COL = "experiment_group"
+
+VIP_REP_LOSS = 0.1
+VIP_BASELINE_GROUP_PREFIX = "bc-vip-alltasks_img_cam-agent"
 
 ENV_LABELS = {
     "goal": "Goal",
@@ -106,6 +110,13 @@ def infer_observation(low_dim: object, data_modality: object = None) -> str:
     return "img"
 
 
+def is_vip_baseline_group(experiment_group: object) -> bool:
+    group = str(experiment_group)
+    if not group.startswith(VIP_BASELINE_GROUP_PREFIX):
+        return False
+    return "long-train" not in group and "repscale" not in group
+
+
 def infer_method(algo_name: str, rep_loss: float) -> str | None:
     if algo_name == "bc_cardpol_policy":
         if rep_loss == 0.0:
@@ -117,7 +128,7 @@ def infer_method(algo_name: str, rep_loss: float) -> str | None:
         return "vae"
     if algo_name == "bc_curl_policy" and rep_loss == 1.0:
         return "curl"
-    if algo_name == "bc_vip_policy" and rep_loss == 1.0:
+    if algo_name == "bc_vip_policy" and rep_loss == VIP_REP_LOSS:
         return "vip"
     return None
 
@@ -143,12 +154,19 @@ def prepare_runs(df: pd.DataFrame) -> pd.DataFrame:
         infer_method(algo, rep_loss)
         for algo, rep_loss in zip(runs[ALGO_NAME_COL], runs["rep_loss"])
     ]
-    return runs[
+    runs = runs[
         runs["env"].notna()
         & runs["method"].notna()
         & runs["success"].notna()
         & runs[TASK_ID_COL].notna()
     ]
+    if EXPERIMENT_GROUP_COL in runs.columns:
+        vip_mask = runs["method"] == "vip"
+        runs = runs[
+            ~vip_mask
+            | runs[EXPERIMENT_GROUP_COL].map(is_vip_baseline_group)
+        ]
+    return runs
 
 
 def success_stats_over_tasks_and_seeds(group: pd.DataFrame) -> tuple[float, float]:
@@ -208,7 +226,9 @@ def build_method_env_tables(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
             mean_table[method] = pd.NA
         if method not in stderr_table.columns:
             stderr_table[method] = pd.NA
-    return mean_table[METHOD_ORDER], stderr_table[METHOD_ORDER]
+    mean_table = mean_table[METHOD_ORDER].apply(pd.to_numeric, errors="coerce")
+    stderr_table = stderr_table[METHOD_ORDER].apply(pd.to_numeric, errors="coerce")
+    return mean_table, stderr_table
 
 
 def _escape_latex_text(text: str) -> str:
@@ -260,7 +280,7 @@ def format_method_env_latex_table(
     body_lines: list[str] = []
     for (env, obs, distract), mean_row in mean_table.iterrows():
         stderr_row = stderr_table.loc[(env, obs, distract)]
-        rounded_means = mean_row.round(3)
+        rounded_means = pd.to_numeric(mean_row, errors="coerce").round(3)
         row_max = rounded_means.max(skipna=True)
         cells = [
             _format_latex_cell(
