@@ -151,6 +151,23 @@ class TruncatedSequenceDataset(Dataset):
         return self.sequence_dataset.__getitem__(idx)
 
 
+def dual_task_dataset_kwargs(cfg):
+    """Keyword args for DualTaskBatchDataset from ``cfg.data.dual_task``."""
+    dt = cfg.data.dual_task
+    return dict(
+        focused_task_id=dt.focused_task_id,
+        future_step_min=dt.future_step_min,
+        future_step_max=dt.future_step_max,
+        mixed_mode=dt.get("mixed_mode", "future_pair"),
+        icvf_p_randomgoal=dt.get("icvf_p_randomgoal", 0.3),
+        icvf_p_trajgoal=dt.get("icvf_p_trajgoal", 0.5),
+        icvf_p_currgoal=dt.get("icvf_p_currgoal", 0.2),
+        icvf_p_samegoal=dt.get("icvf_p_samegoal", 0.5),
+        icvf_reward_scale=dt.get("icvf_reward_scale", 1.0),
+        icvf_reward_shift=dt.get("icvf_reward_shift", -1.0),
+    )
+
+
 def validate_dual_task_cfg(cfg):
     """Require env.task_id to match data.dual_task.focused_task_id when dual-task is on."""
     if not cfg.data.dual_task.enable:
@@ -195,9 +212,10 @@ class DualTaskBatchDataset(Dataset):
 
     Mixed samples contain:
         obs, obs_future, task_emb, task_id, future_step_k
+        (or VIP / ICVF frame tuples when mixed_mode is set accordingly)
     """
 
-    _MIXED_MODES = ("future_pair", "vip")
+    _MIXED_MODES = ("future_pair", "vip", "icvf")
 
     def __init__(
         self,
@@ -206,6 +224,12 @@ class DualTaskBatchDataset(Dataset):
         future_step_min=1,
         future_step_max=10,
         mixed_mode="future_pair",
+        icvf_p_randomgoal=0.3,
+        icvf_p_trajgoal=0.5,
+        icvf_p_currgoal=0.2,
+        icvf_p_samegoal=0.5,
+        icvf_reward_scale=1.0,
+        icvf_reward_shift=-1.0,
     ):
         if not task_datasets:
             raise ValueError("task_datasets must be a non-empty list of per-task datasets")
@@ -225,6 +249,13 @@ class DualTaskBatchDataset(Dataset):
             raise ValueError(
                 f"mixed_mode must be one of {self._MIXED_MODES}, got {mixed_mode!r}"
             )
+        icvf_p_sum = icvf_p_randomgoal + icvf_p_trajgoal + icvf_p_currgoal
+        if mixed_mode == "icvf" and not np.isclose(icvf_p_sum, 1.0):
+            raise ValueError(
+                "icvf goal probabilities must sum to 1.0, got "
+                f"random={icvf_p_randomgoal}, traj={icvf_p_trajgoal}, "
+                f"curr={icvf_p_currgoal} (sum={icvf_p_sum})"
+            )
 
         self.task_datasets = task_datasets
         self.focused_task_id = focused_task_id
@@ -235,6 +266,12 @@ class DualTaskBatchDataset(Dataset):
         self.future_step_min = future_step_min
         self.future_step_max = future_step_max
         self.mixed_mode = mixed_mode
+        self.icvf_p_randomgoal = icvf_p_randomgoal
+        self.icvf_p_trajgoal = icvf_p_trajgoal
+        self.icvf_p_currgoal = icvf_p_currgoal
+        self.icvf_p_samegoal = icvf_p_samegoal
+        self.icvf_reward_scale = icvf_reward_scale
+        self.icvf_reward_shift = icvf_reward_shift
         self._concat_cumulative_sizes = self.all_tasks_dataset.cumulative_sizes
 
     def __len__(self):
@@ -323,9 +360,135 @@ class DualTaskBatchDataset(Dataset):
             "task_id": task_id,
         }
 
+    def _obs_at_concat(self, concat_idx, abs_timestep):
+        """Fetch a single-timestep obs from a ConcatDataset index at an absolute demo time."""
+        _, local_idx, vl_dataset = self._resolve_concat_index(concat_idx)
+        seq_dataset = vl_dataset.sequence_dataset
+        _, index_in_demo, demo_length = seq_dataset.get_index_location(local_idx)
+        abs_timestep = int(np.clip(abs_timestep, 0, demo_length - 1))
+        return seq_dataset.get_single_obs(
+            local_idx, timestep_offset=abs_timestep - index_in_demo
+        ), vl_dataset
+
+    def _sample_icvf_goal(
+        self,
+        rng,
+        concat_idx,
+        t,
+        demo_length,
+        *,
+        p_randomgoal,
+        p_trajgoal,
+        p_currgoal,
+    ):
+        """Sample an ICVF goal observation and its absolute timestep (GCSDataset-style).
+
+        Returns (goal_obs, goal_abs_t_or_none). ``goal_abs_t_or_none`` is the absolute
+        timestep in the *current* demo when the goal is on-trajectory (curr / traj);
+        ``None`` when the goal is drawn from a random other demo (never equals ``t``).
+        """
+        u = float(rng.rand())
+        if u < p_currgoal:
+            goal_obs, _ = self._obs_at_concat(concat_idx, t)
+            return goal_obs, t
+
+        if u < p_currgoal + p_trajgoal:
+            final_t = demo_length - 1
+            distance = float(rng.rand())
+            goal_t = int(np.round(t * distance + final_t * (1.0 - distance)))
+            goal_t = int(np.clip(goal_t, 0, final_t))
+            goal_obs, _ = self._obs_at_concat(concat_idx, goal_t)
+            return goal_obs, goal_t
+
+        # Random goal from another trajectory in the mixed pool.
+        other_idx = int(rng.randint(0, self._mixed_pool_size))
+        _, other_local, other_vl = self._resolve_concat_index(other_idx)
+        other_seq = other_vl.sequence_dataset
+        _, other_index_in_demo, other_demo_length = other_seq.get_index_location(
+            other_local
+        )
+        other_t = int(rng.randint(0, other_demo_length))
+        goal_obs = other_seq.get_single_obs(
+            other_local, timestep_offset=other_t - other_index_in_demo
+        )
+        return goal_obs, None
+
+    def _build_mixed_icvf_frames(self, concat_idx, rng):
+        """Sample an ICVF training tuple (s, s', s_+, z) from passive demos.
+
+        Mirrors ``GCSDataset`` in dibyaghosh/icvf_release: outcome ``goals`` (s_+) and
+        intention ``desired_goals`` (z) are sampled with curr / same-traj / random
+        probabilities; with probability ``p_samegoal`` the outcome equals the intention.
+        Rewards use index equality: R = scale * 1[s == g] + shift (defaults: 0 at goal,
+        -1 elsewhere), with masks = 1 - success for TD bootstrapping.
+        """
+        task_id, local_idx, vl_dataset = self._resolve_concat_index(concat_idx)
+        seq_dataset = vl_dataset.sequence_dataset
+        _, index_in_demo, demo_length = seq_dataset.get_index_location(local_idx)
+
+        if demo_length <= 1:
+            t = 0
+            t_next = 0
+        else:
+            t = int(rng.randint(0, demo_length - 1))
+            t_next = t + 1
+
+        desired_obs, desired_t = self._sample_icvf_goal(
+            rng,
+            concat_idx,
+            t,
+            demo_length,
+            p_randomgoal=self.icvf_p_randomgoal,
+            p_trajgoal=self.icvf_p_trajgoal,
+            p_currgoal=self.icvf_p_currgoal,
+        )
+        if float(rng.rand()) < self.icvf_p_samegoal:
+            goal_obs, goal_t = desired_obs, desired_t
+        else:
+            goal_obs, goal_t = self._sample_icvf_goal(
+                rng,
+                concat_idx,
+                t,
+                demo_length,
+                p_randomgoal=self.icvf_p_randomgoal,
+                p_trajgoal=self.icvf_p_trajgoal,
+                p_currgoal=self.icvf_p_currgoal,
+            )
+
+        success = goal_t is not None and int(goal_t) == int(t)
+        desired_success = desired_t is not None and int(desired_t) == int(t)
+        reward = np.float32(
+            float(success) * self.icvf_reward_scale + self.icvf_reward_shift
+        )
+        desired_reward = np.float32(
+            float(desired_success) * self.icvf_reward_scale + self.icvf_reward_shift
+        )
+        mask = np.float32(1.0 - float(success))
+        desired_mask = np.float32(1.0 - float(desired_success))
+
+        def _obs_at(abs_idx):
+            return seq_dataset.get_single_obs(
+                local_idx, timestep_offset=abs_idx - index_in_demo
+            )
+
+        return {
+            "obs": _obs_at(t),
+            "obs_next": _obs_at(t_next),
+            "obs_goal": goal_obs,                    # s_+ (outcome)
+            "obs_desired_goal": desired_obs,         # z (intention)
+            "reward": reward,
+            "desired_reward": desired_reward,
+            "mask": mask,
+            "desired_mask": desired_mask,
+            "task_emb": vl_dataset.task_emb,
+            "task_id": task_id,
+        }
+
     def _build_mixed_sample(self, concat_idx, rng):
         if self.mixed_mode == "vip":
             return self._build_mixed_vip_frames(concat_idx, rng)
+        if self.mixed_mode == "icvf":
+            return self._build_mixed_icvf_frames(concat_idx, rng)
         return self._build_mixed_future_pair(concat_idx, rng)
 
     def __getitem__(self, idx):

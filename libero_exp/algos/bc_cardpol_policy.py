@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader, RandomSampler
 from ..data.get_dataset import (
     DualTaskBatchDataset,
     collate_dual_task_batch,
+    dual_task_dataset_kwargs,
     validate_dual_task_cfg,
 )
 from ..utils.train_utils import setup_optimizer
@@ -57,10 +58,7 @@ class BC_CARDPOL_Policy(BaseAlgo):
     def build_val_loader(self, cfg, val_datasets):
         val_dataset = DualTaskBatchDataset(
             val_datasets,
-            focused_task_id=cfg.data.dual_task.focused_task_id,
-            future_step_min=cfg.data.dual_task.future_step_min,
-            future_step_max=cfg.data.dual_task.future_step_max,
-            mixed_mode=cfg.data.dual_task.get("mixed_mode", "future_pair"),
+            **dual_task_dataset_kwargs(cfg),
         )
         return DataLoader(
             val_dataset,

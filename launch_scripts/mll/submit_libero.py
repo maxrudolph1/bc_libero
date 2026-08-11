@@ -504,10 +504,11 @@ def _build_rep_baseline_sweep_config(
     mixed_mode: str = "future_pair",
     rep_loss_scale: Any = None,
 ) -> Dict[str, Any]:
-    """Hydra sweep entry for VAE/CURL/VIP representation baselines.
+    """Hydra sweep entry for VAE/CURL/VIP/ICVF representation baselines.
 
     `modalities` selects observation inputs: 'image' only or 'image'+'proprio'.
-    `mixed_mode` selects the dual-task mixed-batch sampler ('future_pair' or 'vip').
+    `mixed_mode` selects the dual-task mixed-batch sampler
+    ('future_pair', 'vip', or 'icvf').
     `rep_loss_scale` overrides train.rep_loss_scale; pass a list to sweep it.
     When ``distract=True``, uses ``<backbone>_distract`` configs (datasets_distract).
     """
@@ -679,6 +680,44 @@ def build_vip_sweep_config(
     )
 
 
+def build_icvf_sweep_config(
+    *,
+    env_name: str,
+    task_id: int,
+    config_name: str,
+    seeds: List[int],
+    train_ratio: float,
+    n_epochs: int,
+    wandb_group: str,
+    wandb_project: str = "bc-icvf-vilt",
+    modalities: List[str] = ("image", "proprio"),
+    cameras: List[str] = ("agentview",),
+    distract: bool = False,
+    enable_rollout_during_train: bool = True,
+    post_train_rollout: bool = True,
+    rep_loss_scale: Any = None,
+) -> Dict[str, Any]:
+    """Hydra sweep entry for bc_icvf_policy (ICVF representation baseline)."""
+    return _build_rep_baseline_sweep_config(
+        "bc_icvf_policy",
+        env_name=env_name,
+        task_id=task_id,
+        config_name=config_name,
+        seeds=seeds,
+        train_ratio=train_ratio,
+        n_epochs=n_epochs,
+        wandb_group=wandb_group,
+        wandb_project=wandb_project,
+        modalities=modalities,
+        cameras=cameras,
+        distract=distract,
+        enable_rollout_during_train=enable_rollout_during_train,
+        post_train_rollout=post_train_rollout,
+        mixed_mode="icvf",
+        rep_loss_scale=rep_loss_scale,
+    )
+
+
 REP_BASELINE_MODALITY_SETS = [["image"]] #, ["image", "proprio"]]
 REP_BASELINE_DISTRACT_VALUES = [False, True]
 REP_BASELINE_SEEDS = [0, 1, 2, 3, 4]
@@ -691,6 +730,9 @@ CURL_BASELINE_SEEDS = REP_BASELINE_SEEDS
 VIP_BASELINE_MODALITY_SETS = REP_BASELINE_MODALITY_SETS
 VIP_BASELINE_DISTRACT_VALUES = REP_BASELINE_DISTRACT_VALUES
 VIP_BASELINE_SEEDS = REP_BASELINE_SEEDS
+ICVF_BASELINE_MODALITY_SETS = REP_BASELINE_MODALITY_SETS
+ICVF_BASELINE_DISTRACT_VALUES = REP_BASELINE_DISTRACT_VALUES
+ICVF_BASELINE_SEEDS = REP_BASELINE_SEEDS
 
 
 def build_bc_distract_sweep_config(
@@ -829,6 +871,14 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--icvf-baseline-sweep",
+        action="store_true",
+        help=(
+            "Sweep bc_icvf_policy baseline: modalities (image, image+proprio), "
+            "distractions (yes/no), seeds 0-4."
+        ),
+    )
+    parser.add_argument(
         "--policy",
         type=str,
         default="bc_cardpol_policy",
@@ -839,6 +889,7 @@ if __name__ == "__main__":
             "bc_vae_policy",
             "bc_curl_policy",
             "bc_vip_policy",
+            "bc_icvf_policy",
         ],
         help="Policy package (default: bc_cardpol_policy).",
     )
@@ -853,7 +904,7 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help=(
-            "Comma-separated train.rep_loss_scale values to sweep for VAE/CURL/VIP "
+            "Comma-separated train.rep_loss_scale values to sweep for VAE/CURL/VIP/ICVF "
             "baselines (e.g. '0.5,0.1,0.01,0.001'). Default: use the config value."
         ),
     )
@@ -872,8 +923,8 @@ if __name__ == "__main__":
         default=None,
         choices=["off", "on", "both"],
         help=(
-            "For VAE/CURL/VIP baseline sweeps, choose distraction settings to sweep: "
-            "'off' (no distractor), 'on' (distractor), or 'both'. "
+            "Choose distraction settings to sweep for cardpol and VAE/CURL/VIP/ICVF "
+            "baseline sweeps: 'off' (no distractor), 'on' (distractor), or 'both'. "
             "Default: honor --distract (off unless --distract is set)."
         ),
     )
@@ -909,14 +960,24 @@ if __name__ == "__main__":
         [int(x) for x in cli.task_ids.split(",")] if cli.task_ids else None
     )
 
-    if sum([cli.vae_baseline_sweep, cli.curl_baseline_sweep, cli.vip_baseline_sweep]) > 1:
+    if sum(
+        [
+            cli.vae_baseline_sweep,
+            cli.curl_baseline_sweep,
+            cli.vip_baseline_sweep,
+            cli.icvf_baseline_sweep,
+        ]
+    ) > 1:
         parser.error(
             "Use at most one of --vae-baseline-sweep, --curl-baseline-sweep, "
-            "and --vip-baseline-sweep."
+            "--vip-baseline-sweep, and --icvf-baseline-sweep."
         )
 
     rep_baseline_sweep = (
-        cli.vae_baseline_sweep or cli.curl_baseline_sweep or cli.vip_baseline_sweep
+        cli.vae_baseline_sweep
+        or cli.curl_baseline_sweep
+        or cli.vip_baseline_sweep
+        or cli.icvf_baseline_sweep
     )
     if cli.vae_baseline_sweep:
         cli.policy = "bc_vae_policy"
@@ -924,6 +985,8 @@ if __name__ == "__main__":
         cli.policy = "bc_curl_policy"
     elif cli.vip_baseline_sweep:
         cli.policy = "bc_vip_policy"
+    elif cli.icvf_baseline_sweep:
+        cli.policy = "bc_icvf_policy"
 
     libero_envs = envs_cli if envs_cli is not None else [
         # "libero_spatial",
@@ -946,17 +1009,18 @@ if __name__ == "__main__":
 
     seeds = [0, 1, 2, 3, 4]
     task_ids = task_ids_cli if task_ids_cli is not None else [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    rep_loss_scales = [0.0, 0.01] #, 0.001, 0.005]
+    rep_loss_scales = [0.01] #, 0.0, 0.001, 0.005]
     train_ratio = 0.9
     n_epochs = 50
 
+    distract_values = (
+        distract_values_cli
+        if distract_values_cli is not None
+        else ([True] if cli.distract else [False])
+    )
+
     if rep_baseline_sweep:
         modality_sets = [parse_modality_set(",".join(m)) for m in REP_BASELINE_MODALITY_SETS]
-        distract_values = (
-            distract_values_cli
-            if distract_values_cli is not None
-            else ([True] if cli.distract else [False])
-        )
         seeds = REP_BASELINE_SEEDS
     else:
         modality_sets = [
@@ -968,10 +1032,9 @@ if __name__ == "__main__":
             modality_sets = [parse_modality_set(spec) for spec in cli.modality_sets]
         else:
             modality_sets = [parse_modality_set(",".join(m)) for m in modality_sets]
-        distract_values = [True] if cli.distract else [False]
 
     cameras = parse_camera_set(cli.cameras) if cli.cameras else list(DEFAULT_CAMERAS)
-    if (cli.distract or rep_baseline_sweep) and "agentview" not in cameras:
+    if (True in distract_values or rep_baseline_sweep) and "agentview" not in cameras:
         parser.error(
             "--distract requires the 'agentview' camera: the distractor is baked "
             "into agentview_rgb (datasets_distract) and applied to agentview at "
@@ -983,8 +1046,10 @@ if __name__ == "__main__":
             build_rep_baseline = build_vae_sweep_config
         elif cli.curl_baseline_sweep:
             build_rep_baseline = build_curl_sweep_config
-        else:
+        elif cli.vip_baseline_sweep:
             build_rep_baseline = build_vip_sweep_config
+        else:
+            build_rep_baseline = build_icvf_sweep_config
         sweep_configs = [
             build_rep_baseline(
                 env_name=env_name,
@@ -1035,12 +1100,13 @@ if __name__ == "__main__":
                 wandb_project=cli.wandb_project,
                 modalities=modalities,
                 cameras=cameras,
-                distract=cli.distract,
+                distract=distract,
             )
             for env_name in libero_envs
             for task_id in task_ids
             for rep_loss_scale in rep_loss_scales
             for modalities in modality_sets
+            for distract in distract_values
         ]
 
     if cli.array_max_parallel is not None and not cli.array:

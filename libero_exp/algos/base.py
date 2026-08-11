@@ -20,6 +20,7 @@ from libero.lifelong.datasets import SequenceVLDataset
 from ..data.get_dataset import (
     DualTaskBatchDataset,
     collate_dual_task_batch,
+    dual_task_dataset_kwargs,
     get_dataset,
     validate_dual_task_cfg,
 )
@@ -179,10 +180,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
             validate_dual_task_cfg(cfg)
             train_dataset = DualTaskBatchDataset(
                 train_datasets,
-                focused_task_id=cfg.data.dual_task.focused_task_id,
-                future_step_min=cfg.data.dual_task.future_step_min,
-                future_step_max=cfg.data.dual_task.future_step_max,
-                mixed_mode=cfg.data.dual_task.get("mixed_mode", "future_pair"),
+                **dual_task_dataset_kwargs(cfg),
             )
             train_collate_fn = collate_dual_task_batch
             print(

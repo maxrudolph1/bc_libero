@@ -5,3 +5,4 @@ from .bc_cardpol_policy import BC_CARDPOL_Policy
 from .bc_vae_policy import BC_VAE_Policy
 from .bc_curl_policy import BC_CURL_Policy
 from .bc_vip_policy import BC_VIP_Policy
+from .bc_icvf_policy import BC_ICVF_Policy
