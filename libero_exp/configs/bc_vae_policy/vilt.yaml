@@ -19,13 +19,16 @@ data:
 
 train:
   rep_loss_scale: 1.0
+  vae_type: vae                 # vae | vqvae
   vae_latent_dim: 64
   vae_hidden_dim: 256
+  vq_num_embeddings: 512
+  vq_commitment_cost: 0.25
 
 
 wandb:
   use_wandb: true
   policy_arch: vilt
   project: bc-vae-vilt
-  name: ${data.env_name}_${algo.algo_name}_vilt_task${data.dual_task.focused_task_id}_${now:%m%d}_${now:%H%M}_seed${train.seed}_ratio${data.train_ratio}
-  group: ${data.env_name}_${algo.algo_name}_vilt
+  name: ${data.env_name}_${algo.algo_name}_${train.vae_type}_vilt_task${data.dual_task.focused_task_id}_${now:%m%d}_${now:%H%M}_seed${train.seed}_ratio${data.train_ratio}
+  group: ${data.env_name}_${algo.algo_name}_${train.vae_type}_vilt

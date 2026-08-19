@@ -584,9 +584,13 @@ def build_vae_sweep_config(
     enable_rollout_during_train: bool = True,
     post_train_rollout: bool = True,
     rep_loss_scale: Any = None,
+    vae_type: Any = None,
 ) -> Dict[str, Any]:
-    """Hydra sweep entry for bc_vae_policy (VAE representation baseline)."""
-    return _build_rep_baseline_sweep_config(
+    """Hydra sweep entry for bc_vae_policy (VAE / VQ-VAE representation baseline).
+
+    ``vae_type`` selects ``train.vae_type`` ('vae' or 'vqvae'); pass a list to sweep.
+    """
+    config = _build_rep_baseline_sweep_config(
         "bc_vae_policy",
         env_name=env_name,
         task_id=task_id,
@@ -603,6 +607,11 @@ def build_vae_sweep_config(
         post_train_rollout=post_train_rollout,
         rep_loss_scale=rep_loss_scale,
     )
+    if vae_type is not None:
+        config["train.vae_type"] = vae_type
+        if not isinstance(vae_type, list):
+            config["wandb.group"] = f"{config['wandb.group']}_{vae_type}"
+    return config
 
 
 def build_curl_sweep_config(
@@ -724,6 +733,7 @@ REP_BASELINE_SEEDS = [0, 1, 2, 3, 4]
 VAE_BASELINE_MODALITY_SETS = REP_BASELINE_MODALITY_SETS
 VAE_BASELINE_DISTRACT_VALUES = REP_BASELINE_DISTRACT_VALUES
 VAE_BASELINE_SEEDS = REP_BASELINE_SEEDS
+VAE_BASELINE_TYPES = ["vae", "vqvae"]
 CURL_BASELINE_MODALITY_SETS = REP_BASELINE_MODALITY_SETS
 CURL_BASELINE_DISTRACT_VALUES = REP_BASELINE_DISTRACT_VALUES
 CURL_BASELINE_SEEDS = REP_BASELINE_SEEDS
@@ -850,8 +860,18 @@ if __name__ == "__main__":
         "--vae-baseline-sweep",
         action="store_true",
         help=(
-            "Sweep bc_vae_policy baseline: modalities (image, image+proprio), "
-            "distractions (yes/no), seeds 0-4."
+            "Sweep bc_vae_policy baseline pre-training: modalities "
+            "(image, image+proprio), distractions (yes/no), seeds 0-4, "
+            "and train.vae_type (vae / vqvae; override with --vae-types)."
+        ),
+    )
+    parser.add_argument(
+        "--vae-types",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated train.vae_type values for --vae-baseline-sweep "
+            "(e.g. 'vae', 'vqvae', or 'vae,vqvae'). Default: vae,vqvae."
         ),
     )
     parser.add_argument(
@@ -959,6 +979,15 @@ if __name__ == "__main__":
     task_ids_cli = (
         [int(x) for x in cli.task_ids.split(",")] if cli.task_ids else None
     )
+    vae_types_cli = None
+    if cli.vae_types is not None:
+        vae_types_cli = [x.strip().lower() for x in cli.vae_types.split(",") if x.strip()]
+        invalid = [t for t in vae_types_cli if t not in ("vae", "vqvae")]
+        if not vae_types_cli or invalid:
+            parser.error(
+                "--vae-types must be a comma-separated subset of: vae, vqvae "
+                f"(got {cli.vae_types!r})."
+            )
 
     if sum(
         [
@@ -1044,32 +1073,56 @@ if __name__ == "__main__":
     if rep_baseline_sweep:
         if cli.vae_baseline_sweep:
             build_rep_baseline = build_vae_sweep_config
-        elif cli.curl_baseline_sweep:
-            build_rep_baseline = build_curl_sweep_config
-        elif cli.vip_baseline_sweep:
-            build_rep_baseline = build_vip_sweep_config
+            vae_types = vae_types_cli if vae_types_cli is not None else list(VAE_BASELINE_TYPES)
+            sweep_configs = [
+                build_rep_baseline(
+                    env_name=env_name,
+                    task_id=task_id,
+                    config_name=cli.backbone,
+                    seeds=seeds,
+                    train_ratio=train_ratio,
+                    n_epochs=n_epochs,
+                    wandb_group=cli.wandb_group,
+                    wandb_project=cli.wandb_project,
+                    modalities=modalities,
+                    cameras=cameras,
+                    distract=distract,
+                    rep_loss_scale=rep_loss_scales_cli,
+                    vae_type=vae_type,
+                )
+                for env_name in libero_envs
+                for task_id in task_ids
+                for modalities in modality_sets
+                for distract in distract_values
+                for vae_type in vae_types
+            ]
         else:
-            build_rep_baseline = build_icvf_sweep_config
-        sweep_configs = [
-            build_rep_baseline(
-                env_name=env_name,
-                task_id=task_id,
-                config_name=cli.backbone,
-                seeds=seeds,
-                train_ratio=train_ratio,
-                n_epochs=n_epochs,
-                wandb_group=cli.wandb_group,
-                wandb_project=cli.wandb_project,
-                modalities=modalities,
-                cameras=cameras,
-                distract=distract,
-                rep_loss_scale=rep_loss_scales_cli,
-            )
-            for env_name in libero_envs
-            for task_id in task_ids
-            for modalities in modality_sets
-            for distract in distract_values
-        ]
+            if cli.curl_baseline_sweep:
+                build_rep_baseline = build_curl_sweep_config
+            elif cli.vip_baseline_sweep:
+                build_rep_baseline = build_vip_sweep_config
+            else:
+                build_rep_baseline = build_icvf_sweep_config
+            sweep_configs = [
+                build_rep_baseline(
+                    env_name=env_name,
+                    task_id=task_id,
+                    config_name=cli.backbone,
+                    seeds=seeds,
+                    train_ratio=train_ratio,
+                    n_epochs=n_epochs,
+                    wandb_group=cli.wandb_group,
+                    wandb_project=cli.wandb_project,
+                    modalities=modalities,
+                    cameras=cameras,
+                    distract=distract,
+                    rep_loss_scale=rep_loss_scales_cli,
+                )
+                for env_name in libero_envs
+                for task_id in task_ids
+                for modalities in modality_sets
+                for distract in distract_values
+            ]
     elif cli.distract and cli.policy in ("bc_policy", "bc_ib_policy"):
         sweep_configs = [
             build_bc_distract_sweep_config(
