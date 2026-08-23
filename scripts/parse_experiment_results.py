@@ -29,6 +29,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 METRICS_FILENAME = "metrics_summary.csv"
+HISTORY_METRICS_FILENAME = "metrics.csv"
 CONFIG_FILENAME = "config.yaml"
 
 
@@ -71,6 +72,22 @@ def load_metrics_summary(metrics_path: Path) -> dict[str, Any]:
     return {str(key): value for key, value in row.items()}
 
 
+def load_last_rollout_success(
+    metrics_path: Path,
+    success_col: str = "rollout/success_env_avg",
+) -> float | None:
+    """Return the last non-null rollout success from ``metrics.csv`` history."""
+    if not metrics_path.is_file():
+        return None
+    df = pd.read_csv(metrics_path)
+    if success_col not in df.columns:
+        return None
+    series = pd.to_numeric(df[success_col], errors="coerce").dropna()
+    if series.empty:
+        return None
+    return float(series.iloc[-1])
+
+
 def load_run_config(config_path: Path, prefix: str = "cfg") -> dict[str, Any]:
     """Load and flatten a run ``config.yaml``."""
     if not config_path.exists():
@@ -87,16 +104,22 @@ def load_run_config(config_path: Path, prefix: str = "cfg") -> dict[str, Any]:
 
 def parse_job_dir(job_dir: Path) -> dict[str, Any] | None:
     """Build one result row from a single job artifact directory."""
-    metrics_path = job_dir / METRICS_FILENAME
-    if not metrics_path.is_file():
+    summary_path = job_dir / METRICS_FILENAME
+    history_path = job_dir / HISTORY_METRICS_FILENAME
+    config_path = job_dir / CONFIG_FILENAME
+    if not summary_path.is_file() and not (history_path.is_file() and config_path.is_file()):
         return None
 
     row: dict[str, Any] = {
         "job_name": job_dir.name,
         "job_dir": str(job_dir.resolve()),
     }
-    row.update(load_metrics_summary(metrics_path))
-    row.update(load_run_config(job_dir / CONFIG_FILENAME))
+    if summary_path.is_file():
+        row.update(load_metrics_summary(summary_path))
+    row.update(load_run_config(config_path))
+    history_success = load_last_rollout_success(history_path)
+    if history_success is not None:
+        row["metrics_csv/rollout/success_env_avg"] = history_success
     return row
 
 

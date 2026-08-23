@@ -413,7 +413,7 @@ def build_cardpol_sweep_config(
     n_epochs: int,
     wandb_group: str,
     wandb_project: str = "bc-cardpol-transformer",
-    modalities: List[str] = ("image", "proprio", "language"),
+    modalities: List[str] = ("image",),
     cameras: List[str] = ("agentview",),
     distract: bool = False,
     enable_rollout_during_train: bool = True,
@@ -496,7 +496,7 @@ def _build_rep_baseline_sweep_config(
     n_epochs: int,
     wandb_group: str,
     wandb_project: str,
-    modalities: List[str] = ("image", "proprio"),
+    modalities: List[str] = ("image",),
     cameras: List[str] = ("agentview",),
     distract: bool = False,
     enable_rollout_during_train: bool = True,
@@ -506,7 +506,7 @@ def _build_rep_baseline_sweep_config(
 ) -> Dict[str, Any]:
     """Hydra sweep entry for VAE/CURL/VIP/ICVF representation baselines.
 
-    `modalities` selects observation inputs: 'image' only or 'image'+'proprio'.
+    `modalities` selects observation inputs (default: 'image' only).
     `mixed_mode` selects the dual-task mixed-batch sampler
     ('future_pair', 'vip', or 'icvf').
     `rep_loss_scale` overrides train.rep_loss_scale; pass a list to sweep it.
@@ -578,7 +578,7 @@ def build_vae_sweep_config(
     n_epochs: int,
     wandb_group: str,
     wandb_project: str = "bc-vae-vilt",
-    modalities: List[str] = ("image", "proprio"),
+    modalities: List[str] = ("image",),
     cameras: List[str] = ("agentview",),
     distract: bool = False,
     enable_rollout_during_train: bool = True,
@@ -624,7 +624,7 @@ def build_curl_sweep_config(
     n_epochs: int,
     wandb_group: str,
     wandb_project: str = "bc-curl-vilt",
-    modalities: List[str] = ("image", "proprio"),
+    modalities: List[str] = ("image",),
     cameras: List[str] = ("agentview",),
     distract: bool = False,
     enable_rollout_during_train: bool = True,
@@ -661,7 +661,7 @@ def build_vip_sweep_config(
     n_epochs: int,
     wandb_group: str,
     wandb_project: str = "bc-vip-vilt",
-    modalities: List[str] = ("image", "proprio"),
+    modalities: List[str] = ("image",),
     cameras: List[str] = ("agentview",),
     distract: bool = False,
     enable_rollout_during_train: bool = True,
@@ -699,7 +699,7 @@ def build_icvf_sweep_config(
     n_epochs: int,
     wandb_group: str,
     wandb_project: str = "bc-icvf-vilt",
-    modalities: List[str] = ("image", "proprio"),
+    modalities: List[str] = ("image",),
     cameras: List[str] = ("agentview",),
     distract: bool = False,
     enable_rollout_during_train: bool = True,
@@ -727,7 +727,8 @@ def build_icvf_sweep_config(
     )
 
 
-REP_BASELINE_MODALITY_SETS = [["image"]] #, ["image", "proprio"]]
+DEFAULT_MODALITY_SETS = [["image"]]
+REP_BASELINE_MODALITY_SETS = DEFAULT_MODALITY_SETS
 REP_BASELINE_DISTRACT_VALUES = [False, True]
 REP_BASELINE_SEEDS = [0, 1, 2, 3, 4]
 VAE_BASELINE_MODALITY_SETS = REP_BASELINE_MODALITY_SETS
@@ -860,8 +861,8 @@ if __name__ == "__main__":
         "--vae-baseline-sweep",
         action="store_true",
         help=(
-            "Sweep bc_vae_policy baseline pre-training: modalities "
-            "(image, image+proprio), distractions (yes/no), seeds 0-4, "
+            "Sweep bc_vae_policy baseline pre-training: image only, "
+            "distractions (yes/no), seeds 0-4, "
             "and train.vae_type (vae / vqvae; override with --vae-types)."
         ),
     )
@@ -878,24 +879,21 @@ if __name__ == "__main__":
         "--curl-baseline-sweep",
         action="store_true",
         help=(
-            "Sweep bc_curl_policy baseline: modalities (image, image+proprio), "
-            "distractions (yes/no), seeds 0-4."
+            "Sweep bc_curl_policy baseline: image only, distractions (yes/no), seeds 0-4."
         ),
     )
     parser.add_argument(
         "--vip-baseline-sweep",
         action="store_true",
         help=(
-            "Sweep bc_vip_policy baseline: modalities (image, image+proprio), "
-            "distractions (yes/no), seeds 0-4."
+            "Sweep bc_vip_policy baseline: image only, distractions (yes/no), seeds 0-4."
         ),
     )
     parser.add_argument(
         "--icvf-baseline-sweep",
         action="store_true",
         help=(
-            "Sweep bc_icvf_policy baseline: modalities (image, image+proprio), "
-            "distractions (yes/no), seeds 0-4."
+            "Sweep bc_icvf_policy baseline: image only, distractions (yes/no), seeds 0-4."
         ),
     )
     parser.add_argument(
@@ -1048,19 +1046,11 @@ if __name__ == "__main__":
         else ([True] if cli.distract else [False])
     )
 
+    modality_sets = [parse_modality_set(",".join(m)) for m in DEFAULT_MODALITY_SETS]
+    if cli.modality_sets:
+        modality_sets = [parse_modality_set(spec) for spec in cli.modality_sets]
     if rep_baseline_sweep:
-        modality_sets = [parse_modality_set(",".join(m)) for m in REP_BASELINE_MODALITY_SETS]
         seeds = REP_BASELINE_SEEDS
-    else:
-        modality_sets = [
-            # ["image"],
-            ["image", "proprio"],
-            # ["image", "proprio", "language"],
-        ]
-        if cli.modality_sets:
-            modality_sets = [parse_modality_set(spec) for spec in cli.modality_sets]
-        else:
-            modality_sets = [parse_modality_set(",".join(m)) for m in modality_sets]
 
     cameras = parse_camera_set(cli.cameras) if cli.cameras else list(DEFAULT_CAMERAS)
     if (True in distract_values or rep_baseline_sweep) and "agentview" not in cameras:

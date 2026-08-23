@@ -1,0 +1,13 @@
+experiment_group,method,runs,envs,distract,obs,rep_loss,seeds,tasks
+bc-cardpol-baseline_img_cam-agent,cardpol,150,"goal,object,spatial",no,img,0.01,0-4 (5),0-9 (10)
+bc-cardpol-baseline_img_cam-agent_distract,cardpol,150,"goal,object,spatial",yes,img,0.01,0-4 (5),0-9 (10)
+bc-curl-baseline_img_cam-agent,curl,150,"goal,object,spatial",no,img,1,0-4 (5),0-9 (10)
+bc-curl-baseline_img_cam-agent_distract,curl,150,"goal,object,spatial",yes,img,1,0-4 (5),0-9 (10)
+bc-icvf-weight-rerun_img_cam-agent,icvf,82,"goal,object",no,img,0.01,0-4 (5),0-9 (10)
+bc-icvf-weight-rerun_img_cam-agent_distract,icvf,81,"goal,object",yes,img,0.01,0-4 (5),0-8 (9)
+bc-vae-baseline_img_cam-agent,vae,150,"goal,object,spatial",no,img,1,0-4 (5),0-9 (10)
+bc-vae-baseline_img_cam-agent_distract,vae,150,"goal,object,spatial",yes,img,1,0-4 (5),0-9 (10)
+bc-vip-baseline-better-weight-rerun_img_cam-agent,vip,139,"goal,object,spatial",no,img,0.01,0-4 (5),0-9 (10)
+bc-vip-baseline-better-weight-rerun_img_cam-agent_distract,vip,138,"goal,object,spatial",yes,img,0.01,0-4 (5),0-9 (10)
+bc-vqvae-baseline_img_cam-agent_distract_vqvae,vqvae,150,"goal,object,spatial",yes,img,1,0-4 (5),0-9 (10)
+bc-vqvae-baseline_img_cam-agent_vqvae,vqvae,150,"goal,object,spatial",no,img,1,0-4 (5),0-9 (10)
