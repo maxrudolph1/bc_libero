@@ -4,7 +4,7 @@ How the paper comparison table in `figures/final_results/` is built from `artifa
 
 The older, repo-wide parsers (all experiment groups, Vanilla vs CardPol sweeps, img+proprio, etc.) are documented in [`scripts/PARSING_GUIDE.md`](../scripts/PARSING_GUIDE.md). **This file is only for the scoped baseline table.**
 
-**Last updated:** 2026-08-23
+**Last updated:** 2026-08-24
 
 ---
 
@@ -28,22 +28,47 @@ Optional flags:
 
 ---
 
-## What this parse covers
+## Source folders
 
-Only **image-only, agent-view** representation baselines, with and without distractors. It does **not** scan the rest of `artifacts/` (dated CardPol sweeps, img+proprio, VIP alltasks, weight sweeps, …).
+Every number in `figures/final_results/` comes from **exactly these 12 wandb groups** under `artifacts/`. The list is `EXPERIMENT_GROUPS` in `scripts/parse_final_results.py`. Nothing else under `artifacts/` is read.
 
-| Method | LaTeX header | Artifact folders |
-|--------|--------------|------------------|
-| CardPol (`\method`) | `\method` | `bc-cardpol-baseline_img_cam-agent` / `_distract` |
-| VIP | VIP | `bc-vip-baseline-better-weight-rerun_img_cam-agent` / `_distract` |
-| VAE | VAE | `bc-vae-baseline_img_cam-agent` / `_distract` |
-| VQ-VAE | VQ-VAE | `bc-vqvae-baseline_img_cam-agent_vqvae` / `_distract_vqvae` |
-| CURL | CURL | `bc-curl-baseline_img_cam-agent` / `_distract` |
-| ICVF | ICVF | `bc-icvf-weight-rerun_img_cam-agent` / `_distract` |
+ICVF uses **`bc-icvf-weight-rerun2_*` for Goal, Object, and Spatial** (clean and distract). It does not mix in `bc-icvf-weight-rerun_*` or `bc-icvf-baseline_*`.
 
-Folder names are wandb groups. A complete cell is **3 envs × 10 tasks × 5 seeds = 150 runs** (one folder). VIP/ICVF reruns may still be partial; check `figures/final_results/coverage.csv`.
+| Method | Setting | Artifact folder | Suites | Runs | `rep_loss` |
+|--------|---------|-----------------|--------|-----:|------------|
+| CardPol (`\method`) | Clean | `artifacts/bc-cardpol-baseline_img_cam-agent` | goal, object, spatial | 150 | 0.01 |
+| CardPol (`\method`) | Distract | `artifacts/bc-cardpol-baseline_img_cam-agent_distract` | goal, object, spatial | 150 | 0.01 |
+| VIP | Clean | `artifacts/bc-vip-baseline-better-weight-rerun_img_cam-agent` | goal, object, spatial | 139 | 0.01 |
+| VIP | Distract | `artifacts/bc-vip-baseline-better-weight-rerun_img_cam-agent_distract` | goal, object, spatial | 138 | 0.01 |
+| VAE | Clean | `artifacts/bc-vae-baseline_img_cam-agent` | goal, object, spatial | 150 | 1.0 |
+| VAE | Distract | `artifacts/bc-vae-baseline_img_cam-agent_distract` | goal, object, spatial | 150 | 1.0 |
+| VQ-VAE | Clean | `artifacts/bc-vqvae-baseline_img_cam-agent_vqvae` | goal, object, spatial | 150 | 1.0 |
+| VQ-VAE | Distract | `artifacts/bc-vqvae-baseline_img_cam-agent_distract_vqvae` | goal, object, spatial | 150 | 1.0 |
+| CURL | Clean | `artifacts/bc-curl-baseline_img_cam-agent` | goal, object, spatial | 150 | 1.0 |
+| CURL | Distract | `artifacts/bc-curl-baseline_img_cam-agent_distract` | goal, object, spatial | 150 | 1.0 |
+| ICVF | Clean | `artifacts/bc-icvf-weight-rerun2_img_cam-agent` | goal, object, spatial | 150 | 0.01 |
+| ICVF | Distract | `artifacts/bc-icvf-weight-rerun2_img_cam-agent_distract` | goal, object, spatial | 150 | 0.01 |
 
-To change which folders are used, edit `EXPERIMENT_GROUPS` in `scripts/parse_final_results.py`.
+Run counts are parseable jobs (`metrics_summary.csv` and/or `metrics.csv`). A complete folder is **3 suites × 10 tasks × 5 seeds = 150**. Live counts are in `figures/final_results/coverage.csv`. VIP is still a few jobs short.
+
+### Not used (do not confuse with the table)
+
+These related groups exist under `artifacts/` but are **excluded**:
+
+| Folder | Why it is not in the table |
+|--------|----------------------------|
+| `bc-icvf-weight-rerun_img_cam-agent[_distract]` | First ICVF weight rerun; incomplete; replaced by `rerun2` |
+| `bc-icvf-baseline_img_cam-agent[_distract]` | Earlier ICVF baseline |
+| `bc-vip-alltasks_img_cam-agent[_distract]` | Older VIP (goal+object only) |
+| `bc-vip-alltasks-long-train_*` | Longer train, not the paper VIP column |
+| `bc-vip-best-baseline_*` | Intermediate VIP group; not used |
+| `bc-vip-baseline-better-rep-loss_*` | Different VIP loss setting |
+| `bc-vip-repscale_*` / `bc-vip-weight-sweep_*` | Sweeps, not the main column |
+| `bc-cardpol-weight-sweep_*` | CardPol sweep, not the baseline column |
+| `bc-vae-baseline_img+proprio_*` | Image+proprio; this table is image-only |
+| Dated CardPol folders (`07112026-goal_*`, `07132026-spatial_*`, …) | Older CardPol sweeps |
+
+To change sources, edit `EXPERIMENT_GROUPS` and re-run the parser.
 
 ---
 
@@ -70,7 +95,7 @@ Same rule as `scripts/parse_method_env_table.py`:
 
 1. Mean success over seeds for each `task_id`.
 2. Report **mean ± SEM across tasks** (std of the 10 task means / √n_tasks).
-3. Bold the best mean in each row (ties: every max). Missing → `---`.
+3. Bold the highest mean in each row (ties at 3 decimals: every max). Missing → `---`.
 
 Rows are LIBERO suite × setting: Goal / Object / Spatial × Clean / Distract. All of these folders are image-only, so there is no obs column in the LaTeX table.
 
@@ -91,6 +116,9 @@ Method identity is inferred from algo + folder, not from a global `rep_loss_scal
 | `method_env_table.tex` / `.csv` | Paper table, **metrics_summary** scores (unsuffixed copy) |
 | `method_env_table_metrics_summary.tex` / `.csv` | Same table, explicitly named |
 | `method_env_table_metrics.tex` / `.csv` | Same layout, **last `metrics.csv`** scores |
+| `method_task_table.tex` / `.csv` | Per-task table (no average across tasks), summary scores |
+| `method_task_table_metrics_summary.tex` / `.csv` | Same per-task table, explicitly named |
+| `method_task_table_metrics.tex` / `.csv` | Per-task table from last `metrics.csv` |
 | `experiment_results_latex.txt` | Per-folder task × env grids (summary scores) |
 | `experiment_results_latex_metrics_summary.txt` | Same |
 | `experiment_results_latex_metrics.txt` | Per-folder grids from `metrics.csv` |
@@ -103,10 +131,11 @@ LaTeX table details:
 
 - Header uses `\method` (your paper macro), not the string `CardPol`.
 - Caption: LIBERO image-only success, mean ± SEM, `\method{}` uses $\lambda=0.01$.
-- Suites are grouped with `\cmidrule`; Clean/Distract share a suite name on the first row.
+- Suite table: suites are grouped with `\cmidrule`; Clean/Distract share a suite name on the first row.
+- Per-task table: within each suite, clean tasks 0–9 then distract tasks 0–9 (same task ids stacked for C vs D). `\cmidrule` between suites and between the C and D blocks.
 - SEM is `\scriptstyle\pm`.
 - Score-source note is a `%` comment under `\label`, not in the caption.
-- Needs `booktabs` (and whatever defines `\method`).
+- Needs `booktabs` (and whatever defines `\method`). The per-task table also needs `longtable`.
 
 ---
 
@@ -129,7 +158,7 @@ Primary metric column: `rollout/success_env_avg`.
 
 1. Confirm jobs under the folders in `EXPERIMENT_GROUPS` have `metrics_summary.csv` and/or `metrics.csv`.
 2. Re-run `.venv/bin/python scripts/parse_final_results.py`.
-3. Check `coverage.csv` for run counts (150 = complete; VIP/ICVF may still be short).
+3. Check `coverage.csv` for run counts (150 = complete; VIP may still be short).
 4. Compare `method_env_table.tex` vs `method_env_table_metrics.tex` if a wandb number disagrees with the summary table.
 5. Copy the `.tex` you want into the paper. Use the `metrics` table if you want last-logged history (wandb charts); use `metrics_summary` if you want `run.summary`.
 
@@ -141,7 +170,7 @@ Primary metric column: `rollout/success_env_avg`.
 |---------|--------|------------|
 | `--` / `---` in a cell | No parseable jobs for that suite × distract × method | `coverage.csv`; folder still running or not in `EXPERIMENT_GROUPS` |
 | Table 0.526 vs wandb 0.596 (CardPol Spatial clean) | Summary vs last history | Use `method_env_table_metrics.tex` |
-| Wrong VIP/ICVF numbers | Older folders (`bc-vip-alltasks_*`, `bc-icvf-baseline_*`, `bc-vip-best-baseline_*`) | Parser uses the rerun folders in the table above |
+| Wrong VIP/ICVF numbers | Older folders (`bc-vip-alltasks_*`, `bc-icvf-baseline_*`, `bc-icvf-weight-rerun_*` without `2`, `bc-vip-best-baseline_*`) | Parser uses the folders in **Source folders** above |
 | VQ-VAE missing / merged into VAE | Both algos are `bc_vae_policy` | Distinguished by `_vqvae` in the group name / `vae_type` |
 | Parser skipped a folder | No `metrics_summary.csv` or `metrics.csv` yet | Warning on stderr; re-run when jobs land |
 

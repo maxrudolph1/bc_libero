@@ -61,8 +61,8 @@ EXPERIMENT_GROUPS = [
     "bc-vqvae-baseline_img_cam-agent_distract_vqvae",
     "bc-curl-baseline_img_cam-agent",
     "bc-curl-baseline_img_cam-agent_distract",
-    "bc-icvf-weight-rerun_img_cam-agent",
-    "bc-icvf-weight-rerun_img_cam-agent_distract",
+    "bc-icvf-weight-rerun2_img_cam-agent",
+    "bc-icvf-weight-rerun2_img_cam-agent_distract",
 ]
 
 METHOD_ORDER = ["cardpol", "vip", "vae", "vqvae", "curl", "icvf"]
@@ -86,6 +86,7 @@ METHOD_LATEX_LABELS = {
 DISTRACT_ORDER = [False, True]
 DISTRACT_LABELS = {False: "no", True: "yes"}
 DISTRACT_LATEX_LABELS = {False: "Clean", True: "Distract"}
+TASK_ORDER = list(range(10))
 
 HISTORY_SUCCESS_COL = "metrics_csv/rollout/success_env_avg"
 
@@ -109,6 +110,7 @@ METRIC_SOURCES = {
         "success_col": SUCCESS_COL,
         "stem": "metrics_summary",
         "label": "tab:final_results_metrics_summary",
+        "task_label": "tab:final_results_task_metrics_summary",
         "source_text": (
             "Scores are wandb \\texttt{run.summary} values from "
             "\\texttt{metrics\\_summary.csv}."
@@ -118,6 +120,7 @@ METRIC_SOURCES = {
         "success_col": HISTORY_SUCCESS_COL,
         "stem": "metrics",
         "label": "tab:final_results_metrics",
+        "task_label": "tab:final_results_task_metrics",
         "source_text": (
             "Scores are the last logged \\texttt{rollout/success\\_env\\_avg} "
             "from \\texttt{metrics.csv}."
@@ -257,6 +260,62 @@ def build_method_env_tables(runs: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
     return mean_table, stderr_table, long_df
 
 
+def success_stats_over_seeds(group: pd.DataFrame) -> tuple[float, float]:
+    """Mean and SEM of success over seeds for one task."""
+    values = pd.to_numeric(group["success"], errors="coerce").dropna()
+    mean = float(values.mean())
+    if len(values) <= 1:
+        return mean, float("nan")
+    stderr = float(values.std(ddof=1) / (len(values) ** 0.5))
+    return mean, stderr
+
+
+def build_method_task_tables(
+    runs: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Per-task mean/SEM tables: one row per suite × task × distract × method."""
+    records: list[dict[str, object]] = []
+    grouped = runs.groupby(["env", "distract", "method", TASK_ID_COL], dropna=False)
+    for (env, distract, method, task_id), group in grouped:
+        mean, stderr = success_stats_over_seeds(group)
+        records.append(
+            {
+                "env": env,
+                "distract": distract,
+                "method": method,
+                "task_id": int(task_id),
+                "mean_success": mean,
+                "stderr_success": stderr,
+                "num_seeds": len(group),
+            }
+        )
+    long_df = pd.DataFrame(records)
+    row_index = pd.MultiIndex.from_product(
+        [ENV_ORDER, DISTRACT_ORDER, TASK_ORDER],
+        names=["env", "distract", "task_id"],
+    )
+    mean_table = long_df.pivot_table(
+        index=["env", "distract", "task_id"],
+        columns="method",
+        values="mean_success",
+        aggfunc="first",
+    ).reindex(row_index)
+    stderr_table = long_df.pivot_table(
+        index=["env", "distract", "task_id"],
+        columns="method",
+        values="stderr_success",
+        aggfunc="first",
+    ).reindex(row_index)
+    for method in METHOD_ORDER:
+        if method not in mean_table.columns:
+            mean_table[method] = pd.NA
+        if method not in stderr_table.columns:
+            stderr_table[method] = pd.NA
+    mean_table = mean_table[METHOD_ORDER].apply(pd.to_numeric, errors="coerce")
+    stderr_table = stderr_table[METHOD_ORDER].apply(pd.to_numeric, errors="coerce")
+    return mean_table, stderr_table, long_df
+
+
 def _format_latex_cell(
     mean: float | None,
     stderr: float | None = None,
@@ -357,6 +416,117 @@ def table_to_csv(mean_table: pd.DataFrame, stderr_table: pd.DataFrame) -> pd.Dat
     return flat.join(stderr_flat)
 
 
+def format_method_task_latex_table(
+    mean_table: pd.DataFrame,
+    stderr_table: pd.DataFrame,
+    *,
+    source_text: str = "",
+    label: str = "tab:final_results_task",
+) -> str:
+    method_columns = [col for col in METHOD_ORDER if col in mean_table.columns]
+    n_cols = 3 + len(method_columns)
+    column_spec = "lll" + "c" * len(method_columns)
+    header = " & ".join(
+        [
+            "Suite",
+            "C/D",
+            "Task",
+            *[METHOD_LATEX_LABELS[col] for col in method_columns],
+        ]
+    )
+    body_lines: list[str] = []
+    prev_env: str | None = None
+    prev_distract: object | None = None
+    for (env, distract, task_id), mean_row in mean_table.iterrows():
+        env_key = str(env)
+        if prev_env is not None and env_key != prev_env:
+            body_lines.append(f"\\cmidrule(lr){{1-{n_cols}}}")
+            prev_distract = None
+        elif prev_env == env_key and prev_distract is not None and bool(distract) != bool(prev_distract):
+            body_lines.append(f"\\cmidrule(lr){{2-{n_cols}}}")
+        env_cell = ENV_LABELS[env_key] if env_key != prev_env else ""
+        setting_cell = (
+            ("C" if not bool(distract) else "D")
+            if prev_distract is None or bool(distract) != bool(prev_distract) or env_key != prev_env
+            else ""
+        )
+        prev_env = env_key
+        prev_distract = distract
+        stderr_row = stderr_table.loc[(env, distract, task_id)]
+        rounded_means = pd.to_numeric(mean_row, errors="coerce").round(3)
+        row_max = rounded_means.max(skipna=True)
+        cells = [
+            _format_latex_cell(
+                mean_row[col],
+                stderr_row[col],
+                bold=pd.notna(mean_row[col]) and rounded_means.loc[col] == row_max,
+            )
+            for col in method_columns
+        ]
+        body_lines.append(
+            " & ".join(
+                [
+                    env_cell,
+                    setting_cell,
+                    str(int(task_id)),
+                    *cells,
+                ]
+            )
+            + " \\\\"
+        )
+    body = "\n".join(body_lines)
+    caption = (
+        "Per-task LIBERO image-only success (mean $\\pm$ SEM over 5 seeds). "
+        "Within each suite, clean tasks 0--9 are grouped, then distract tasks 0--9. "
+        "C = clean, D = distract. Best result in each row is bold. "
+        r"\method{} uses $\lambda{=}0.01$."
+    )
+    continued = "Per-task LIBERO image-only success (continued)."
+    source_comment = f"% {source_text}\n" if source_text else ""
+    return f"""{source_comment}\\begingroup
+\\scriptsize
+\\setlength{{\\tabcolsep}}{{2.8pt}}
+\\renewcommand{{\\arraystretch}}{{0.88}}
+\\begin{{longtable}}{{{column_spec}}}
+\\caption{{{caption}}}
+\\label{{{label}}} \\\\
+\\toprule
+{header} \\\\
+\\midrule
+\\endfirsthead
+\\caption[]{{{continued}}} \\\\
+\\toprule
+{header} \\\\
+\\midrule
+\\endhead
+\\midrule
+\\multicolumn{{{n_cols}}}{{r}}{{\\emph{{Continued on next page}}}} \\\\
+\\endfoot
+\\bottomrule
+\\endlastfoot
+{body}
+\\end{{longtable}}
+\\endgroup
+"""
+
+
+def task_table_to_csv(
+    mean_table: pd.DataFrame,
+    stderr_table: pd.DataFrame,
+) -> pd.DataFrame:
+    flat = mean_table.copy()
+    flat.index = [
+        f"{ENV_LABELS[str(env)]}|{DISTRACT_LABELS[bool(distract)]}|task{int(task_id)}"
+        for env, distract, task_id in flat.index
+    ]
+    flat.columns = [METHOD_LABELS[col] for col in flat.columns]
+    flat.index.name = "env|distract|task"
+    stderr_flat = stderr_table.copy()
+    stderr_flat.index = flat.index
+    stderr_flat.columns = [f"{METHOD_LABELS[col]}_stderr" for col in stderr_flat.columns]
+    return flat.join(stderr_flat)
+
+
 def env_task_pivot(group: pd.DataFrame) -> pd.DataFrame:
     summary = (
         group.groupby(["env", TASK_ID_COL], dropna=False)["success"]
@@ -429,6 +599,13 @@ def write_source_outputs(
         source_text=source_cfg["source_text"],
         label=source_cfg["label"],
     )
+    task_mean, task_stderr, task_long = build_method_task_tables(runs)
+    task_latex = format_method_task_latex_table(
+        task_mean,
+        task_stderr,
+        source_text=source_cfg["source_text"],
+        label=source_cfg["task_label"],
+    )
     stem = source_cfg["stem"]
     header = generated + f"% Metric source: {source_name}\n"
     latex = header + latex_table + "\n"
@@ -474,18 +651,26 @@ def write_source_outputs(
     report_path = output_dir / f"experiment_results_latex_{stem}.txt"
     long_path = output_dir / f"method_env_long_{stem}.csv"
     runs_path = output_dir / f"runs_{stem}.csv"
+    task_csv_path = output_dir / f"method_task_table_{stem}.csv"
+    task_tex_path = output_dir / f"method_task_table_{stem}.tex"
+    task_long_path = output_dir / f"method_task_long_{stem}.csv"
 
     table_to_csv(mean_table, stderr_table).to_csv(csv_path)
     tex_path.write_text(latex, encoding="utf-8")
     report_path.write_text("\n".join(sections).rstrip() + "\n", encoding="utf-8")
     long_df.to_csv(long_path, index=False)
     slim_runs(runs).to_csv(runs_path, index=False)
+    task_table_to_csv(task_mean, task_stderr).to_csv(task_csv_path)
+    task_tex_path.write_text(header + task_latex + "\n", encoding="utf-8")
+    task_long.to_csv(task_long_path, index=False)
 
     print(f"Wrote {tex_path}", file=sys.stderr)
     print(f"Wrote {csv_path}", file=sys.stderr)
     print(f"Wrote {report_path}", file=sys.stderr)
     print(f"Wrote {long_path}", file=sys.stderr)
     print(f"Wrote {runs_path}", file=sys.stderr)
+    print(f"Wrote {task_tex_path}", file=sys.stderr)
+    print(f"Wrote {task_csv_path}", file=sys.stderr)
 
     if source_name == "metrics_summary":
         # Keep the original un-suffixed names as the summary table.
@@ -498,6 +683,12 @@ def write_source_outputs(
         )
         long_df.to_csv(output_dir / "method_env_long.csv", index=False)
         slim_runs(runs).to_csv(output_dir / "runs.csv", index=False)
+        (output_dir / "method_task_table.csv").write_text(
+            task_csv_path.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        (output_dir / "method_task_table.tex").write_text(
+            header + task_latex + "\n", encoding="utf-8"
+        )
 
     return runs
 
