@@ -922,8 +922,10 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help=(
-            "Comma-separated train.rep_loss_scale values to sweep for VAE/CURL/VIP/ICVF "
-            "baselines (e.g. '0.5,0.1,0.01,0.001'). Default: use the config value."
+            "Comma-separated train.rep_loss_scale values to sweep for cardpol and "
+            "VAE/CURL/VIP/ICVF baselines (e.g. '0.0' or '0.5,0.1,0.01'). "
+            "Default: cardpol uses the hardcoded list in __main__; other baselines "
+            "use the config value."
         ),
     )
     parser.add_argument(
@@ -1036,7 +1038,9 @@ if __name__ == "__main__":
 
     seeds = [0, 1, 2, 3, 4]
     task_ids = task_ids_cli if task_ids_cli is not None else [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    rep_loss_scales = [0.01] #, 0.0, 0.001, 0.005]
+    rep_loss_scales = (
+        rep_loss_scales_cli if rep_loss_scales_cli is not None else [0.01]
+    )  # e.g. override with --rep-loss-scales 0.0
     train_ratio = 0.9
     n_epochs = 50
 
