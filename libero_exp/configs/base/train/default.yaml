@@ -25,6 +25,11 @@ loss_scale: 1.0
 mi_loss_scale: 1e-4
 mine_mi_loss_scale: 0.1
 
+# When true (CardPol / VAE / CURL / VIP / ICVF), BC does not backprop into the
+# spatial / input encoder: only the aux representation loss updates it. Temporal
+# modules and the action head still train from BC on detached encoder features.
+stop_encoder_grad_from_bc: false
+
 # resume training
 resume: false
 resume_path: ""

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import robomimic.utils.tensor_utils as TensorUtils
 from libero.libero.benchmark import get_benchmark
 from torch.utils.data import DataLoader, RandomSampler
 
@@ -34,6 +35,10 @@ class BC_CARDPOL_Policy(BaseAlgo):
     CARD-style training with dual-task batches:
       - focused: standard BC on the configured task
       - mixed: auxiliary loss on spatial input representations (x)
+
+    Set ``train.stop_encoder_grad_from_bc=true`` so BC does not update the
+    spatial / input encoder (aux-only encoder learning); temporal modules and
+    the action head still train from BC on detached encoder features.
     """
 
     def __init__(self, cfg, inference=False, device="cuda"):
@@ -189,9 +194,62 @@ class BC_CARDPOL_Policy(BaseAlgo):
 
         raise ValueError(f"Unsupported policy_type={policy_type}")
 
+    def _bc_policy_output(self, data):
+        """Encoder → temporal / RNN → action head for BC.
+
+        When ``train.stop_encoder_grad_from_bc`` is true, detach the spatial /
+        input encoder features so BC gradients update only the downstream
+        temporal modules and policy head (encoder is trained by the aux loss).
+        """
+        model = self.model
+        policy_type = self.cfg.policy.policy_type
+        stop_encoder = bool(self.cfg.train.get("stop_encoder_grad_from_bc", False))
+
+        if not stop_encoder:
+            _, _, out = model(data, return_latent=True)
+            return out
+
+        if policy_type in ("BCTransformerPolicy", "BCViLTPolicy"):
+            x = model.spatial_encode(data).detach()
+            z0 = model.temporal_encode(x)
+            return model.policy_head(z0)
+
+        if policy_type == "BCDPPolicy":
+            x = model.spatial_encode(data).detach()
+            return model.temporal_encode(x)
+
+        if policy_type == "BCMLPPolicy":
+            x = model.spatial_encode(data).detach()
+            x = TensorUtils.join_dimensions(x, 2, 3)
+            x = TensorUtils.join_dimensions(x, 1, 2)
+            x = model.spatial_down_sample(x)
+            z = model.spatial_mlp(x)
+            return model.policy_head(z)
+
+        if policy_type == "BCRNNPolicy":
+            use_language = model.use_language_conditioning()
+            encoded = self._encode_rnn_input(
+                model, data, use_language=use_language
+            ).detach()
+            encoded = model.rnn_projector(encoded)
+            h0 = torch.zeros(
+                model.D * model.cfg.policy.rnn_num_layers,
+                encoded.shape[0],
+                model.cfg.policy.rnn_hidden_size,
+                device=encoded.device,
+                dtype=encoded.dtype,
+            )
+            c0 = torch.zeros_like(h0)
+            output, _ = model.rnn(encoded, (h0, c0))
+            return model.policy_head(output)
+
+        raise ValueError(
+            f"Unsupported policy_type={policy_type} for stop_encoder_grad_from_bc"
+        )
+
     def compute_bc_loss(self, data, augmentation=None):
         data = self.model.preprocess_input(data, augmentation=augmentation)
-        _, _, dist = self.model(data, return_latent=True)
+        dist = self._bc_policy_output(data)
 
         if self.cfg.policy.policy_type == "BCMLPPolicy":
             bc_loss = self.model.policy_head.loss_fn(

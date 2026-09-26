@@ -418,6 +418,7 @@ def build_cardpol_sweep_config(
     distract: bool = False,
     enable_rollout_during_train: bool = True,
     post_train_rollout: bool = True,
+    stop_encoder_grad_from_bc: bool = False,
 ) -> Dict[str, Any]:
     """One sweep entry: fixed env / task / rep scale; seeds expanded via product.
 
@@ -426,6 +427,8 @@ def build_cardpol_sweep_config(
     `cameras` selects which image views feed the policy (agentview and/or the
     eye-in-hand wrist camera); it sets ``data.obs.modality.rgb``.
     When ``distract=True``, uses ``<backbone>_distract`` configs (datasets_distract).
+    When ``stop_encoder_grad_from_bc=True``, BC does not backprop into the
+    spatial / input encoder (aux-only encoder learning).
     """
     modalities = list(modalities)
     cameras = list(cameras)
@@ -452,6 +455,7 @@ def build_cardpol_sweep_config(
         "train.train_gpus": "[0]",
         "train.rep_loss_scale": rep_loss_scale,
         "train.rep_classifier_hidden": 256,
+        "train.stop_encoder_grad_from_bc": str(stop_encoder_grad_from_bc).lower(),
         "data.dual_task.enable": "true",
         "data.dual_task.focused_task_id": task_id,
         "data.dual_task.future_step_min": 1,
@@ -938,6 +942,20 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--seeds",
+        type=str,
+        default=None,
+        help="Comma-separated train seeds (e.g. '0,1,2,3'). Default: 0-4.",
+    )
+    parser.add_argument(
+        "--stop-encoder-grad-from-bc",
+        action="store_true",
+        help=(
+            "Set train.stop_encoder_grad_from_bc=true so BC does not backprop "
+            "into the spatial / input encoder (aux-only encoder learning)."
+        ),
+    )
+    parser.add_argument(
         "--distract-values",
         type=str,
         default=None,
@@ -978,6 +996,9 @@ if __name__ == "__main__":
     )
     task_ids_cli = (
         [int(x) for x in cli.task_ids.split(",")] if cli.task_ids else None
+    )
+    seeds_cli = (
+        [int(x) for x in cli.seeds.split(",") if x.strip()] if cli.seeds else None
     )
     vae_types_cli = None
     if cli.vae_types is not None:
@@ -1024,19 +1045,10 @@ if __name__ == "__main__":
         # "libero_10",
     ]
 
-    policies = [cli.policy] if cli.distract else [
-        "bc_cardpol_policy",
-        # "bc_policy",
-        # "bc_ib_policy",
-    ]
-    config_names = [cli.backbone] if cli.distract else [
-        # "transformer",
-        "vilt",
-        # "rnn",
-        # "mlp",
-    ]
+    policies = [cli.policy]
+    config_names = [cli.backbone]
 
-    seeds = [0, 1, 2, 3, 4]
+    seeds = seeds_cli if seeds_cli is not None else [0, 1, 2, 3, 4]
     task_ids = task_ids_cli if task_ids_cli is not None else [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     rep_loss_scales = (
         rep_loss_scales_cli if rep_loss_scales_cli is not None else [0.01]
@@ -1054,7 +1066,7 @@ if __name__ == "__main__":
     if cli.modality_sets:
         modality_sets = [parse_modality_set(spec) for spec in cli.modality_sets]
     if rep_baseline_sweep:
-        seeds = REP_BASELINE_SEEDS
+        seeds = seeds_cli if seeds_cli is not None else REP_BASELINE_SEEDS
 
     cameras = parse_camera_set(cli.cameras) if cli.cameras else list(DEFAULT_CAMERAS)
     if (True in distract_values or rep_baseline_sweep) and "agentview" not in cameras:
@@ -1148,6 +1160,7 @@ if __name__ == "__main__":
                 modalities=modalities,
                 cameras=cameras,
                 distract=distract,
+                stop_encoder_grad_from_bc=cli.stop_encoder_grad_from_bc,
             )
             for env_name in libero_envs
             for task_id in task_ids
