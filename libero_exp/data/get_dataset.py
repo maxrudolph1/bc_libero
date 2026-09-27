@@ -159,6 +159,7 @@ def dual_task_dataset_kwargs(cfg):
         future_step_min=dt.future_step_min,
         future_step_max=dt.future_step_max,
         mixed_mode=dt.get("mixed_mode", "future_pair"),
+        mixed_per_sample=dt.get("mixed_per_sample", 1),
         icvf_p_randomgoal=dt.get("icvf_p_randomgoal", 0.3),
         icvf_p_trajgoal=dt.get("icvf_p_trajgoal", 0.5),
         icvf_p_currgoal=dt.get("icvf_p_currgoal", 0.2),
@@ -202,7 +203,8 @@ def validate_dual_task_cfg(cfg):
 
 class DualTaskBatchDataset(Dataset):
     """
-    Pairs one sample from a fixed task with one mixed sample from all tasks.
+    Pairs one sample from a fixed task with ``mixed_per_sample`` mixed samples
+    from all tasks (so the mixed batch is ``mixed_per_sample`` x the BC batch).
 
     Each __getitem__ returns {"focused": sample, "mixed": sample}. Use
     collate_dual_task_batch in the DataLoader to obtain two batches per step:
@@ -224,6 +226,7 @@ class DualTaskBatchDataset(Dataset):
         future_step_min=1,
         future_step_max=10,
         mixed_mode="future_pair",
+        mixed_per_sample=1,
         icvf_p_randomgoal=0.3,
         icvf_p_trajgoal=0.5,
         icvf_p_currgoal=0.2,
@@ -249,6 +252,8 @@ class DualTaskBatchDataset(Dataset):
             raise ValueError(
                 f"mixed_mode must be one of {self._MIXED_MODES}, got {mixed_mode!r}"
             )
+        if mixed_per_sample < 1:
+            raise ValueError(f"mixed_per_sample must be >= 1, got {mixed_per_sample}")
         icvf_p_sum = icvf_p_randomgoal + icvf_p_trajgoal + icvf_p_currgoal
         if mixed_mode == "icvf" and not np.isclose(icvf_p_sum, 1.0):
             raise ValueError(
@@ -266,6 +271,7 @@ class DualTaskBatchDataset(Dataset):
         self.future_step_min = future_step_min
         self.future_step_max = future_step_max
         self.mixed_mode = mixed_mode
+        self.mixed_per_sample = mixed_per_sample
         self.icvf_p_randomgoal = icvf_p_randomgoal
         self.icvf_p_trajgoal = icvf_p_trajgoal
         self.icvf_p_currgoal = icvf_p_currgoal
@@ -493,18 +499,25 @@ class DualTaskBatchDataset(Dataset):
 
     def __getitem__(self, idx):
         focused_idx = idx % len(self.focused_dataset)
-        mixed_idx = self._sample_mixed_index()
-        rng = np.random.RandomState(seed=(int(idx) + 1) * 9973 + int(mixed_idx))
+        mixed = []
+        for _ in range(self.mixed_per_sample):
+            mixed_idx = self._sample_mixed_index()
+            rng = np.random.RandomState(seed=(int(idx) + 1) * 9973 + int(mixed_idx))
+            mixed.append(self._build_mixed_sample(mixed_idx, rng))
         return {
             "focused": self.focused_dataset[focused_idx],
-            "mixed": self._build_mixed_sample(mixed_idx, rng),
+            # A list when mixed_per_sample > 1; collate_dual_task_batch flattens it.
+            "mixed": mixed[0] if self.mixed_per_sample == 1 else mixed,
         }
 
 
 def collate_dual_task_batch(batch):
     """Collate a list of dual-task samples into two batched dicts."""
     focused_samples = [sample["focused"] for sample in batch]
-    mixed_samples = [sample["mixed"] for sample in batch]
+    mixed_samples = []
+    for sample in batch:
+        mixed = sample["mixed"]
+        mixed_samples.extend(mixed if isinstance(mixed, list) else [mixed])
     return {
         "focused": default_collate(focused_samples),
         "mixed": default_collate(mixed_samples),

@@ -61,17 +61,20 @@ EXPERIMENT_GROUPS = [
     "bc-vqvae-baseline_img_cam-agent_distract_vqvae",
     "bc-curl-baseline_img_cam-agent",
     "bc-curl-baseline_img_cam-agent_distract",
+    "bc-supcon-baseline_img_cam-agent",
+    "bc-supcon-baseline_img_cam-agent_distract",
     "bc-icvf-weight-rerun2_img_cam-agent",
     "bc-icvf-weight-rerun2_img_cam-agent_distract",
 ]
 
-METHOD_ORDER = ["cardpol", "vip", "vae", "vqvae", "curl", "icvf"]
+METHOD_ORDER = ["cardpol", "vip", "vae", "vqvae", "curl", "supcon", "icvf"]
 METHOD_LABELS = {
     "cardpol": "CardPol",
     "vip": "VIP",
     "vae": "VAE",
     "vqvae": "VQVAE",
     "curl": "CURL",
+    "supcon": "SupCon",
     "icvf": "ICVF",
 }
 METHOD_LATEX_LABELS = {
@@ -80,6 +83,7 @@ METHOD_LATEX_LABELS = {
     "vae": "VAE",
     "vqvae": "VQ-VAE",
     "curl": "CURL",
+    "supcon": "SupCon",
     "icvf": "ICVF",
 }
 
@@ -178,6 +182,8 @@ def infer_method(row: pd.Series) -> str | None:
         return "vip"
     if algo == "bc_curl_policy":
         return "curl"
+    if algo == "bc_supcon_policy":
+        return "supcon"
     if algo == "bc_icvf_policy":
         return "icvf"
     if algo == "bc_vae_policy":

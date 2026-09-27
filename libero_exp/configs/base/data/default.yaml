@@ -51,3 +51,4 @@ dual_task:
   future_step_min: 1                # min K for mixed-batch (obs_t, obs_{t+K}) pairs
   future_step_max: 10               # max K (inclusive); sampled uniformly per example
   mixed_mode: future_pair           # "future_pair" | "vip" (o_0,g,o_t,o_{t+1}) | "icvf" (s,s',s_+,z)
+  mixed_per_sample: 1               # mixed samples per focused sample (mixed batch = batch_size * this)

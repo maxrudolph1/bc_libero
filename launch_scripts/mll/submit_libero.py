@@ -508,7 +508,7 @@ def _build_rep_baseline_sweep_config(
     mixed_mode: str = "future_pair",
     rep_loss_scale: Any = None,
 ) -> Dict[str, Any]:
-    """Hydra sweep entry for VAE/CURL/VIP/ICVF representation baselines.
+    """Hydra sweep entry for VAE/CURL/SupCon/VIP/ICVF representation baselines.
 
     `modalities` selects observation inputs (default: 'image' only).
     `mixed_mode` selects the dual-task mixed-batch sampler
@@ -653,6 +653,50 @@ def build_curl_sweep_config(
         post_train_rollout=post_train_rollout,
         rep_loss_scale=rep_loss_scale,
     )
+
+
+def build_supcon_sweep_config(
+    *,
+    env_name: str,
+    task_id: int,
+    config_name: str,
+    seeds: List[int],
+    train_ratio: float,
+    n_epochs: int,
+    wandb_group: str,
+    wandb_project: str = "bc-supcon-vilt",
+    modalities: List[str] = ("image",),
+    cameras: List[str] = ("agentview",),
+    distract: bool = False,
+    enable_rollout_during_train: bool = True,
+    post_train_rollout: bool = True,
+    rep_loss_scale: Any = None,
+    mixed_per_sample: int = 4,
+) -> Dict[str, Any]:
+    """Hydra sweep entry for bc_supcon_policy (supervised-contrastive task-id baseline).
+
+    ``mixed_per_sample`` sets the contrastive (mixed) batch to batch_size x this;
+    it is passed explicitly because the *_distract configs reset data.dual_task.
+    """
+    config = _build_rep_baseline_sweep_config(
+        "bc_supcon_policy",
+        env_name=env_name,
+        task_id=task_id,
+        config_name=config_name,
+        seeds=seeds,
+        train_ratio=train_ratio,
+        n_epochs=n_epochs,
+        wandb_group=wandb_group,
+        wandb_project=wandb_project,
+        modalities=modalities,
+        cameras=cameras,
+        distract=distract,
+        enable_rollout_during_train=enable_rollout_during_train,
+        post_train_rollout=post_train_rollout,
+        rep_loss_scale=rep_loss_scale,
+    )
+    config["data.dual_task.mixed_per_sample"] = mixed_per_sample
+    return config
 
 
 def build_vip_sweep_config(
@@ -887,6 +931,14 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--supcon-baseline-sweep",
+        action="store_true",
+        help=(
+            "Sweep bc_supcon_policy baseline (supervised contrastive on task id): "
+            "image only, distractions (yes/no), seeds 0-4."
+        ),
+    )
+    parser.add_argument(
         "--vip-baseline-sweep",
         action="store_true",
         help=(
@@ -910,6 +962,7 @@ if __name__ == "__main__":
             "bc_ib_policy",
             "bc_vae_policy",
             "bc_curl_policy",
+            "bc_supcon_policy",
             "bc_vip_policy",
             "bc_icvf_policy",
         ],
@@ -1014,18 +1067,21 @@ if __name__ == "__main__":
         [
             cli.vae_baseline_sweep,
             cli.curl_baseline_sweep,
+            cli.supcon_baseline_sweep,
             cli.vip_baseline_sweep,
             cli.icvf_baseline_sweep,
         ]
     ) > 1:
         parser.error(
             "Use at most one of --vae-baseline-sweep, --curl-baseline-sweep, "
+            "--supcon-baseline-sweep, "
             "--vip-baseline-sweep, and --icvf-baseline-sweep."
         )
 
     rep_baseline_sweep = (
         cli.vae_baseline_sweep
         or cli.curl_baseline_sweep
+        or cli.supcon_baseline_sweep
         or cli.vip_baseline_sweep
         or cli.icvf_baseline_sweep
     )
@@ -1033,6 +1089,8 @@ if __name__ == "__main__":
         cli.policy = "bc_vae_policy"
     elif cli.curl_baseline_sweep:
         cli.policy = "bc_curl_policy"
+    elif cli.supcon_baseline_sweep:
+        cli.policy = "bc_supcon_policy"
     elif cli.vip_baseline_sweep:
         cli.policy = "bc_vip_policy"
     elif cli.icvf_baseline_sweep:
@@ -1105,6 +1163,8 @@ if __name__ == "__main__":
         else:
             if cli.curl_baseline_sweep:
                 build_rep_baseline = build_curl_sweep_config
+            elif cli.supcon_baseline_sweep:
+                build_rep_baseline = build_supcon_sweep_config
             elif cli.vip_baseline_sweep:
                 build_rep_baseline = build_vip_sweep_config
             else:
