@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 from typing import Any, Optional
 
 import pandas as pd
@@ -61,6 +62,26 @@ def setup_run_output_dir(cfg: DictConfig) -> str:
     return run_dir
 
 
+def _git_state() -> dict[str, Any]:
+    """Commit and dirty flag of the BC-IB checkout this run launched from."""
+    repo_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    def git(*args: str) -> Optional[str]:
+        try:
+            return subprocess.run(
+                ["git", "-C", repo_dir, *args],
+                capture_output=True, text=True, check=True, timeout=30,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    status = git("status", "--porcelain", "--untracked-files=no")
+    return {
+        "commit": git("rev-parse", "HEAD"),
+        "dirty": None if status is None else bool(status),
+    }
+
+
 def save_run_configs(cfg: DictConfig, output_dir: str) -> None:
     """Persist resolved config and Hydra overrides for the run."""
     os.makedirs(output_dir, exist_ok=True)
@@ -70,13 +91,19 @@ def save_run_configs(cfg: DictConfig, output_dir: str) -> None:
     overrides = {
         "job": {
             "name": OmegaConf.select(hydra_cfg, "job.name", default=None),
+            "config_name": OmegaConf.select(hydra_cfg, "job.config_name", default=None),
             "num": OmegaConf.select(hydra_cfg, "job.num", default=None),
             "override_dirname": OmegaConf.select(hydra_cfg, "job.override_dirname", default=None),
         },
         "runtime": {
             "output_dir": OmegaConf.select(hydra_cfg, "runtime.output_dir", default=None),
             "choices": dict(OmegaConf.select(hydra_cfg, "runtime.choices", default={})),
+            "config_sources": [
+                OmegaConf.to_container(src)
+                for src in OmegaConf.select(hydra_cfg, "runtime.config_sources", default=[])
+            ],
         },
+        "git": _git_state(),
         "overrides": {
             "task": list(OmegaConf.select(hydra_cfg, "overrides.task", default=[])),
             "config": list(OmegaConf.select(hydra_cfg, "overrides.config", default=[])),
