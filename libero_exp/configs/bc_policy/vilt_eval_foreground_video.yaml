@@ -1,0 +1,4 @@
+defaults:
+  - vilt_eval
+  - _self_
+  - override ../base/data@data: foreground_video

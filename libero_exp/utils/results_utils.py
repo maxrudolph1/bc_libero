@@ -2,7 +2,6 @@ import os
 import torch
 import wandb
 import numpy as np
-import pandas as pd
 from tqdm import tqdm
 from typing import List
 from einops import rearrange
@@ -59,10 +58,13 @@ def rollout(cfg, env_dict, policy, num_env_rollouts, horizon=None, return_wandb_
 
             augmentor = None
             if distractor_enabled(cfg):
-                augmentor = DistractorAugmentor(cfg.data.distractor.frames_dir)
+                augmentor = DistractorAugmentor(
+                    cfg.data.distractor.frames_dir,
+                    layout=getattr(cfg.data.distractor, "layout", "hconcat_right"),
+                )
                 env_name = (
                     cfg.env.env_name[env_idx]
-                    if isinstance(cfg.env.env_name, list)
+                    if not isinstance(cfg.env.env_name, str)
                     else cfg.env.env_name
                 )
                 augmentor.reset(
@@ -71,11 +73,9 @@ def rollout(cfg, env_dict, policy, num_env_rollouts, horizon=None, return_wandb_
                     env_name=env_name,
                     task_idx=task_idx,
                     rollout_idx=num_env_rollout,
-                    max_horizon=horizon,
+                    max_horizon=horizon + 1,
                 )
-                # Augment the initial obs once, before the first action. Each raw
-                # obs must be augmented exactly once: apply_to_obs mutates obs in
-                # place (horizontal concat), so applying it twice grows the width.
+                # Transform the initial obs and each subsequent raw obs once.
                 augmentor.apply_to_obs(obs, obs_key="agentview_image", advance=True)
 
             # simulate the physics without any actions
@@ -164,6 +164,8 @@ def merge_results(results: List[dict], compute_avg=True):
 
 
 def save_success_rate(epoch, success_metrics, summary_file_path):
+    import pandas as pd
+
     success_metrics = {k.replace("rollout/", ""): v for k, v in success_metrics.items()}
     success_heads = list(success_metrics.keys())
     success_heads.remove("success_env_avg")
@@ -180,4 +182,3 @@ def save_success_rate(epoch, success_metrics, summary_file_path):
 
     df = df[success_heads]
     df.to_csv(summary_file_path)
-    

@@ -82,7 +82,10 @@ class DistractorSource:
 class DistractorAugmentor:
     """Runtime augmentor for eval rollouts (one moving clip per episode/env slot)."""
 
-    def __init__(self, frames_dir: str):
+    def __init__(self, frames_dir: str, layout: str = LAYOUT):
+        if layout not in (LAYOUT, "keep_foreground_video"):
+            raise ValueError(f"Unknown distractor layout: {layout}")
+        self.layout = layout
         self.source = DistractorSource(frames_dir)
         self.start_indices: List[int] = []
         self.step = 0
@@ -115,7 +118,15 @@ class DistractorAugmentor:
         for env_slot, ob in enumerate(obs):
             frame_idx = self.start_indices[env_slot] + self.step
             distract = self.source.load_frame(frame_idx)
-            ob[obs_key] = append_distractor(ob[obs_key], distract)
+            if self.layout == "keep_foreground_video":
+                from .foreground_utils import composite_foreground
+                if ob["foreground_video_flip_vertical"]:
+                    distract = distract[::-1]
+                ob[obs_key] = composite_foreground(
+                    ob[obs_key], ob["agentview_foreground_mask"], distract
+                )
+            else:
+                ob[obs_key] = append_distractor(ob[obs_key], distract)
         if advance:
             self.step += 1
         return obs
@@ -129,10 +140,13 @@ def distractor_enabled(cfg) -> bool:
 def validate_distractor_shape_meta(cfg, shape_meta) -> None:
     if not distractor_enabled(cfg):
         return
-    expected = (3, 128, 256)
+    layout = getattr(cfg.data.distractor, "layout", LAYOUT)
+    if layout not in (LAYOUT, "keep_foreground_video"):
+        raise ValueError(f"Unknown distractor layout: {layout}")
+    expected = (3, 128, 128) if layout == "keep_foreground_video" else (3, 128, 256)
     actual = tuple(shape_meta["all_shapes"]["agentview_rgb"])
     if actual != expected:
         raise ValueError(
             f"distractor enabled but agentview_rgb shape is {actual}, expected "
-            f"{expected}. Set data.root_dir to datasets_distract."
+            f"{expected} for layout {layout}. Select the matching dataset root."
         )

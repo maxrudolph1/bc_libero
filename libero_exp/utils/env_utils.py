@@ -9,6 +9,7 @@ from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv, DummyVectorEnv, SubprocVectorEnv
 
 from .data_utils import get_task_embs
+from .distractor_utils import distractor_enabled
 
 
 def build_env(cfg, env_type, env_name, task_id=None, img_size=128, 
@@ -26,6 +27,8 @@ def build_env(cfg, env_type, env_name, task_id=None, img_size=128,
     Returns:
         env: A gym-like environment.
     """
+    if isinstance(env_name, str):
+        env_name = [env_name]
     if env_type.lower() == "libero":
         if isinstance(render_gpu_ids, Iterable):
             render_gpu_ids = [int(i) for i in render_gpu_ids]
@@ -45,8 +48,11 @@ def build_env(cfg, env_type, env_name, task_id=None, img_size=128,
             benchmark_dict = benchmark.get_benchmark_dict()
             task_suite = benchmark_dict[env_name[env_idx]]()
 
-            if task_id == None:
-                task_id = range(task_suite.n_tasks)
+            task_ids = range(task_suite.n_tasks) if task_id is None else task_id
+            if not isinstance(task_ids, Iterable) or isinstance(task_ids, str):
+                task_ids = [int(task_ids)]
+            else:
+                task_ids = [int(task) for task in task_ids]
 
             task_descriptions = []
             for task_i in range(task_suite.n_tasks):
@@ -62,10 +68,14 @@ def build_env(cfg, env_type, env_name, task_id=None, img_size=128,
                 torch.save(task_embs, file_path)     
             task_suite.set_task_embs(task_embs)
 
-            if not isinstance(task_id, list):
-                task_id = [int(task_id)]
-            for task_i in task_id: 
-                env, init_states_ = make_libero_env(task_suite, task_i, img_size, env_num, gpu_id_for_each_env[env_idx])
+            for task_i in task_ids:
+                foreground_video = distractor_enabled(cfg) and getattr(
+                    cfg.data.distractor, "layout", "hconcat_right"
+                ) == "keep_foreground_video"
+                env, init_states_ = make_libero_env(
+                    task_suite, task_i, img_size, env_num,
+                    gpu_id_for_each_env[env_idx], foreground_video=foreground_video,
+                )
                 task_emb = task_suite.get_task_emb(task_i)
                 env_dict[f"{env_name[env_idx]}/{task_suite.get_task(task_i).name}"] = (env_idx, task_i, env, init_states_, task_emb)
     else:
@@ -74,7 +84,8 @@ def build_env(cfg, env_type, env_name, task_id=None, img_size=128,
     return env_dict
 
 
-def make_libero_env(task_suite, task_id, img_size, env_num=1, gpu_id=-1):
+def make_libero_env(task_suite, task_id, img_size, env_num=1, gpu_id=-1,
+                    foreground_video=False):
     """
     Build a LIBERO environment according to the task suite name and task name.
     """    
@@ -86,6 +97,8 @@ def make_libero_env(task_suite, task_id, img_size, env_num=1, gpu_id=-1):
         img_h = img_w = img_size
 
     task = task_suite.get_task(task_id)
+    if foreground_video and (img_h, img_w) != (128, 128):
+        raise ValueError("Foreground video requires data.img_size=128")
 
     # retrieve a specific task
     task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
@@ -106,14 +119,25 @@ def make_libero_env(task_suite, task_id, img_size, env_num=1, gpu_id=-1):
     init_states_ = init_states[indices]
 
     env_created = False
+    def create_env():
+        raw_env = OffScreenRenderEnv(**env_args)
+        if foreground_video:
+            from .foreground_env import ForegroundMaskEnv
+            return ForegroundMaskEnv(raw_env)
+        return raw_env
+
     count = 0
     env = None
     while not env_created and count < 5:
         try:
             if env_num == 1:
-                env = DummyVectorEnv([lambda: OffScreenRenderEnv(**env_args) for _ in range(env_num)])
+                env = DummyVectorEnv([create_env for _ in range(env_num)])
             else:
-                env = SubprocVectorEnv([lambda: OffScreenRenderEnv(**env_args) for _ in range(env_num)])
+                vector_class = SubprocVectorEnv
+                if foreground_video:
+                    from .spawn_vector_env import SpawnSubprocVectorEnv
+                    vector_class = SpawnSubprocVectorEnv
+                env = vector_class([create_env for _ in range(env_num)])
             env_created = True
         except:
             time.sleep(5)
