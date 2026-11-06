@@ -1,0 +1,25 @@
+{
+  "dataset": "/datastor2/mrudolph/LIBERO/datasets/libero_spatial/pick_up_the_black_bowl_in_the_top_drawer_of_the_wooden_cabinet_and_place_it_on_the_plate_demo.hdf5",
+  "demo": "demo_0",
+  "frames": 153,
+  "room_geoms": [
+    "floor",
+    "wall_leftcorner_visual",
+    "wall_rightcorner_visual",
+    "wall_left_visual",
+    "wall_right_visual",
+    "wall_rear_visual",
+    "wall_front_visual"
+  ],
+  "table_geoms": [
+    "table_collision",
+    "table_visual",
+    "table_leg1_visual",
+    "table_leg2_visual",
+    "table_leg3_visual",
+    "table_leg4_visual"
+  ],
+  "mean_replay_rgb_mae": 3.2916114823750684,
+  "display_orientation": "upright (raw MuJoCo render flipped vertically)",
+  "note": "Foreground preserves all non-room, non-table geometry, including distractor objects and fixtures."
+}
