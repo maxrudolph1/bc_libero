@@ -94,6 +94,9 @@ def init_wandb(cfg, group=None):
         "name": cfg.wandb.name,
         "tags": [f"policy_arch:{policy_arch}"],
     }
+    mode = OmegaConf.select(cfg, "wandb.mode")
+    if mode is not None:
+        init_kwargs["mode"] = mode
     resolved_group = group
     if resolved_group is None and OmegaConf.select(cfg, "wandb.group") is not None:
         resolved_group = cfg.wandb.group

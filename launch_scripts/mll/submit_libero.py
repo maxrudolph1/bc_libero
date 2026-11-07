@@ -124,6 +124,28 @@ def build_train_command(
     return f"{train_script} {config_to_cli_args(config)}"
 
 
+def configure_foreground_video(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Select the completed goal dataset and matched, final-checkpoint rollouts."""
+    config = copy.deepcopy(config)
+    config.update({
+        "data.root_dir": "/datastor2/mrudolph/LIBERO/datasets_foreground_video",
+        "data.distractor.enable": "true",
+        "data.distractor.layout": "keep_foreground_video",
+        "eval.enable_rollout": "false",
+        "eval.post_train_rollout.enable": "true",
+        "eval.post_train_rollout.eval_all": "false",
+        "env.env_num": 10,
+        "env.num_env_rollouts": 100,
+        "env.horizon": 600,
+        "+wandb.mode": "offline",
+    })
+    config["wandb.group"] += (
+        f"_foreground_video_task{config['data.dual_task.focused_task_id']}"
+        f"_rep{config['train.rep_loss_scale']:g}"
+    )
+    return config
+
+
 def _sbatch(script_path: Path, *, dry_run: bool, script_text: str) -> Optional[int]:
     if dry_run:
         print("########  DRY RUN  ##########")
@@ -906,6 +928,10 @@ if __name__ == "__main__":
         help="Use *_distract configs (datasets_distract + eval distractor rollouts).",
     )
     parser.add_argument(
+        "--foreground-video", action="store_true",
+        help="Use foreground-video goal data and 100 final-checkpoint eval episodes (EGL).",
+    )
+    parser.add_argument(
         "--vae-baseline-sweep",
         action="store_true",
         help=(
@@ -1030,6 +1056,8 @@ if __name__ == "__main__":
         ),
     )
     cli = parser.parse_args()
+    if cli.foreground_video and (cli.distract or cli.distract_values is not None):
+        parser.error("--foreground-video cannot be combined with --distract/--distract-values")
 
     distract_values_cli = {
         "off": [False],
@@ -1127,6 +1155,11 @@ if __name__ == "__main__":
         seeds = seeds_cli if seeds_cli is not None else REP_BASELINE_SEEDS
 
     cameras = parse_camera_set(cli.cameras) if cli.cameras else list(DEFAULT_CAMERAS)
+    if cli.foreground_video:
+        if libero_envs != ["libero_goal"]:
+            parser.error("--foreground-video currently has data only for libero_goal")
+        if "agentview" not in cameras:
+            parser.error("--foreground-video requires the agentview camera")
     if (True in distract_values or rep_baseline_sweep) and "agentview" not in cameras:
         parser.error(
             "--distract requires the 'agentview' camera: the distractor is baked "
@@ -1229,12 +1262,23 @@ if __name__ == "__main__":
             for distract in distract_values
         ]
 
+    if cli.foreground_video:
+        # Baseline builders can sweep list-valued weights. Resolve them before
+        # assigning the per-weight foreground-video logging group.
+        sweep_configs = [
+            configure_foreground_video(config)
+            for sweep in sweep_configs
+            for config in from_sweep_config_to_config(sweep)
+        ]
+
     if cli.array_max_parallel is not None and not cli.array:
         parser.error("--array-max-parallel requires --array")
 
     main(
         cli.dry_run,
         sweep_configs,
+        train_script=("MUJOCO_GL=egl PYOPENGL_PLATFORM=egl python train_libero.py"
+                      if cli.foreground_video else "python train_libero.py"),
         num_runs_per_job=cli.num_runs_per_job,
         job_name=cli.job_name,
         partition=cli.partition,

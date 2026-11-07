@@ -112,7 +112,6 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
             self.build_model(cfg, shape_meta)
 
             if cfg.eval.enable_rollout or cfg.eval.post_train_rollout.enable:
-                cfg.env.env_num, cfg.env.num_env_rollouts = 10, 10
                 cfg.env.render_gpu_ids = cfg.env.render_gpu_ids[self.fabric.global_rank] if isinstance(cfg.env.render_gpu_ids, list) else cfg.env.render_gpu_ids
                 cfg.env.env_name = [cfg.env.env_name]
                 env_num_each_rank = math.ceil(len(cfg.env.env_name) / self.fabric.world_size)
@@ -227,17 +226,23 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
 
     def train(self):
         cfg = self.cfg
-        self.before_train()
-        self.evaluate_before_train()
+        try:
+            self.before_train()
+            self.evaluate_before_train()
 
-        print('\nTraining...')
-        self.fabric.barrier()
-        for self.epoch in self.metric_logger.log_every(range(self.start_epoch, cfg.train.n_epochs+1), cfg.eval.eval_every, ""):
-            self.before_epoch()
-            train_metrics = self.run_epoch()
-            self.after_epoch(train_metrics)
+            print('\nTraining...')
+            self.fabric.barrier()
+            for self.epoch in self.metric_logger.log_every(range(self.start_epoch, cfg.train.n_epochs+1), cfg.eval.eval_every, ""):
+                self.before_epoch()
+                train_metrics = self.run_epoch()
+                self.after_epoch(train_metrics)
 
-        self.after_train()
+            self.after_train()
+        finally:
+            # Release renderer workers while EGL/Python modules are still alive.
+            # Interpreter teardown otherwise emits ignored EGL cleanup errors.
+            for entry in getattr(self, "rollout_env", {}).values():
+                entry[2].close()
 
     def get_wandb_group(self):
         """
