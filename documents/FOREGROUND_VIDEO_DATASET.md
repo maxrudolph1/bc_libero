@@ -529,3 +529,53 @@ On those same two tasks, BC averages 67.33% and CARDPol weight 0.01 averages
 77.50%. Do not select VIP's weight from unequal partial seed sets; wait for
 the remaining three evaluations. CURL/VAE have no completed results yet.
 No jobs were launched or scheduler settings changed during this audit.
+
+## Seed extension and standard errors — 2026-11-07 18:13 America/Chicago
+
+Submitted **40 additional runs** as Slurm array **120850**, indices 0–39,
+maximum concurrency 8, for seeds **3 and 4** of BC (weight 0) and CARDPol
+(weight 0.01) on all ten tasks. This extends each method from three to five
+training seeds once complete. Submission directory:
+`slurm_jobs/libero/array_20261107_181248/`. JSON and CSV experiment manifests
+record each index, task, weight, seed, and source job; JSON retains exact commands.
+Indices `4*t` and `4*t+1` are BC seeds 3/4 for task `t`; `4*t+2` and `4*t+3`
+are CARDPol seeds 3/4. All 40 Hydra configurations passed composition and
+setting checks before submission. Commands were copied from the previous
+matching task/weight runs with only the training seed changed. Resources remain
+one GPU, 16 CPUs, 128 GB RAM, and 24 hours per run; training remains 50 epochs,
+batch 64, with 100 final-checkpoint foreground-video evaluation episodes.
+W&B remains offline. Existing runs were not resubmitted.
+
+### Completed three-seed results with standard errors
+
+All values are success percentages, reported as **mean ± one standard error
+of the mean (SEM)**. Per-task SEM is the sample standard deviation across
+training seeds 0/1/2 divided by sqrt(3), using sample variance with `ddof=1`.
+For the overall result, first average each seed over the ten tasks, then compute
+the mean and SEM across the three seed-level averages. Evaluation episodes
+are not treated as independent training replicates. These are one-SEM error
+bounds, not 95% confidence intervals; only three seeds are currently complete.
+New seeds 3/4 are excluded until their final evaluations finish.
+
+| Task | BC, weight 0 | CARDPol, weight 0.01 |
+| --- | ---: | ---: |
+| 0 | 68.33 ± 5.36 | 77.00 ± 4.00 |
+| 1 | 89.33 ± 1.76 | 92.33 ± 0.88 |
+| 2 | 66.33 ± 9.84 | 78.00 ± 5.13 |
+| 3 | 28.67 ± 11.55 | 38.00 ± 11.72 |
+| 4 | 53.67 ± 7.13 | 51.67 ± 15.30 |
+| 5 | 42.67 ± 4.91 | 52.33 ± 2.33 |
+| 6 | 57.00 ± 5.57 | 49.67 ± 5.17 |
+| 7 | 87.67 ± 5.90 | 87.33 ± 5.78 |
+| 8 | 58.33 ± 12.44 | 66.67 ± 8.41 |
+| 9 | 19.00 ± 4.36 | 15.67 ± 2.60 |
+| All ten tasks | **57.10 ± 1.69** | **60.87 ± 0.52** |
+
+Seed-level ten-task averages (seeds 0/1/2):
+
+- BC: 56.70%, 54.40%, 60.20%.
+- CARDPol: 59.90%, 61.70%, 61.00%.
+
+Paired CARDPol minus BC improvement across matching seed-level averages: **3.77 ± 1.90 percentage points** (n=3 seed pairs). No significance test was performed.
+
+For the fully completed VIP weight-0.1 setting on pilot tasks 0 and 2, the corresponding two-task result is **39.83 ± 1.17%** (three seed-level two-task averages). This covers two tasks only and must not be compared directly with the ten-task aggregate. Other VIP weights were incomplete at the 18:08 audit.
