@@ -483,3 +483,49 @@ launcher, configured rollout-count handling, offline W&B mode, and renderer
 cleanup changes described earlier in this logbook. This audit ran Python syntax
 checks and `git diff --check`; it did not launch new experiments, rerun the
 previous smoke tests, or change scheduler settings.
+
+## Progress audit — 2026-11-07 18:08 America/Chicago
+
+Slurm accounting now reports all 48 expansion runs (120497) completed with
+exit code `0:0`. Together with the 12 reused pilot runs, the ten-task BC versus
+CARDPol comparison is complete: 60/60 runs. Verified final checkpoints and
+`post_train/model_final/success_env_avg` in local metrics CSVs for all 60.
+Each table entry averages three seeds, each evaluated for 100 episodes.
+
+| Task | BC, weight 0 | CARDPol, weight 0.01 |
+| --- | ---: | ---: |
+| 0 | 68.33% | 77.00% |
+| 1 | 89.33% | 92.33% |
+| 2 | 66.33% | 78.00% |
+| 3 | 28.67% | 38.00% |
+| 4 | 53.67% | 51.67% |
+| 5 | 42.67% | 52.33% |
+| 6 | 57.00% | 49.67% |
+| 7 | 87.67% | 87.33% |
+| 8 | 58.33% | 66.67% |
+| 9 | 19.00% | 15.67% |
+| All ten tasks | 57.10% | 60.87% |
+
+CARDPol improves the ten-task mean by 3.77 percentage points, improving six
+of ten task means. This supersedes the earlier partial eight-task aggregate;
+it is a descriptive comparison, with no significance test performed.
+
+Baseline array 120572 has 15/54 completed, eight running, and 31 pending,
+with no failures reported. All 15 completed runs are VIP (15/18); indices
+13–15 remain in final evaluation, with 13/14 at rollout batch 10/10 and 15
+at 5/10. CURL has 0/18 completed, five running (18–22), and 13 pending;
+indices 18–20 are in evaluation and 21/22 around training epochs 23–24/50.
+VAE has 0/18 completed and all 18 pending. All completed baseline runs have
+verified final checkpoints and exported success metrics.
+
+| VIP weight | Completed seeds, task 0 | Task 0 mean | Completed seeds, task 2 | Task 2 mean |
+| --- | ---: | ---: | ---: | ---: |
+| 0.1 | 3/3 | 61.33% | 3/3 | 18.33% |
+| 0.01 | 3/3 | 61.67% | 1/3 | 59.00% |
+| 0.001 | 3/3 | 57.33% | 2/3 | 79.50% |
+
+Only VIP weight 0.1 has its full two-task/six-run result: 39.83%.
+On those same two tasks, BC averages 67.33% and CARDPol weight 0.01 averages
+77.50%. Do not select VIP's weight from unequal partial seed sets; wait for
+the remaining three evaluations. CURL/VAE have no completed results yet.
+No jobs were launched or scheduler settings changed during this audit.
