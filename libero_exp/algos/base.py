@@ -449,7 +449,7 @@ class BaseAlgo(nn.Module, metaclass=AlgoMeta):
             )
             self.rollout_tasks(log_video=log_video)
 
-        if self.epoch % cfg.train.save_freq == 0:
+        if not cfg.train.get("save_final_only", False) and self.epoch % cfg.train.save_freq == 0:
             self.model.save(f"{cfg.experiment_dir}/model_{self.epoch}.ckpt", self.epoch, self.optimizer, self.scheduler)
 
         self.fabric.barrier()

@@ -17,11 +17,11 @@ from libero_exp.utils.env_utils import make_libero_env
 from libero_exp.utils.distractor_utils import DistractorAugmentor, DEFAULT_FRAMES_DIR
 
 
-def validate(task, env_num, frames_dir, steps):
-    suite = benchmark.get_benchmark_dict()["libero_goal"]()
+def validate(task, env_num, frames_dir, steps, suite_name="libero_goal"):
+    suite = benchmark.get_benchmark_dict()[suite_name]()
     env, states = make_libero_env(suite, task, 128, env_num, 0, foreground_video=True)
     augmentor = DistractorAugmentor(frames_dir, layout="keep_foreground_video")
-    reset_args = dict(env_num=env_num, global_seed=0, env_name="libero_goal",
+    reset_args = dict(env_num=env_num, global_seed=0, env_name=suite_name,
                       task_idx=task, rollout_idx=0, max_horizon=steps + 1)
     try:
         env.reset()
@@ -77,14 +77,14 @@ def validate(task, env_num, frames_dir, steps):
                 video = video[::-1]
             np.testing.assert_array_equal(ob["agentview_image"][keep], original[keep])
             np.testing.assert_array_equal(ob["agentview_image"][~keep], video[~keep])
-        print(f"VALIDATED task={task} env_num={env_num} frames={steps + 1} plus reset", flush=True)
+        print(f"VALIDATED suite={suite_name} task={task} env_num={env_num} frames={steps + 1} plus reset", flush=True)
         if task == 0:
-            validate_rollout(env, states, env_num, frames_dir)
+            validate_rollout(env, states, env_num, frames_dir, suite_name)
     finally:
         env.close()
 
 
-def validate_rollout(env, states, env_num, frames_dir):
+def validate_rollout(env, states, env_num, frames_dir, suite_name="libero_goal"):
     """Exercise the real policy-observation/video rollout path without weights."""
     import torch
     from omegaconf import OmegaConf
@@ -96,7 +96,8 @@ def validate_rollout(env, states, env_num, frames_dir):
     data.distractor.enable = True
     data.distractor.layout = "keep_foreground_video"
     data.distractor.frames_dir = frames_dir
-    cfg = OmegaConf.create(dict(data=data, env=dict(env_num=env_num, env_name="libero_goal"),
+    data.env_name = suite_name
+    cfg = OmegaConf.create(dict(data=data, env=dict(env_num=env_num, env_name=suite_name),
                                 train=dict(seed=0, device="cpu")))
     ObsUtils.initialize_obs_utils_with_obs_specs({"obs": OmegaConf.to_container(data.obs.modality)})
 
@@ -116,7 +117,7 @@ def validate_rollout(env, states, env_num, frames_dir):
             return np.zeros((env_num, 7))
 
     policy = ProbePolicy()
-    result = rollout(cfg, {"libero_goal/probe": (0, 0, env, states, torch.zeros(1, 768))},
+    result = rollout(cfg, {f"{suite_name}/probe": (0, 0, env, states, torch.zeros(1, 768))},
                      policy, 1, horizon=2, return_wandb_video=False, device=torch.device("cpu"))
     assert policy.calls == 2
     assert result["rollout/vis_env0_task0"].shape == (env_num, 2, 3, 128, 128)
@@ -125,6 +126,7 @@ def validate_rollout(env, states, env_num, frames_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--suite", choices=["libero_goal", "libero_spatial", "libero_object"], default="libero_goal")
     parser.add_argument("--tasks", nargs="+", type=int, default=list(range(10)))
     parser.add_argument("--env-nums", nargs="+", type=int, default=[1, 2])
     parser.add_argument("--steps", type=int, default=2)
@@ -133,4 +135,4 @@ if __name__ == "__main__":
     # Exercise subprocess creation after the parent has used EGL as well.
     for env_num in args.env_nums:
         for task in args.tasks:
-            validate(task, env_num, args.frames_dir, args.steps)
+            validate(task, env_num, args.frames_dir, args.steps, args.suite)

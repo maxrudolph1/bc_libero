@@ -27,12 +27,12 @@ def localize_model_xml(xml):
 
 
 def background_geometry(model):
-    """Match the preview: remove room and table, keep all other geometry."""
+    """Remove room and any table; floor-workspace scenes need no table."""
     names = [model.geom_id2name(i) or "" for i in range(model.ngeom)]
     room = [i for i, name in enumerate(names) if name == "floor" or name.startswith("wall_")]
     table = [i for i, name in enumerate(names) if name.startswith("table")]
-    if not room or not table:
-        raise ValueError("Expected room and table geoms; inspect this scene before converting it")
+    if not room or "floor" not in names:
+        raise ValueError("Expected floor/room geoms; inspect this scene before converting it")
     ids = room + table
     return ids, [names[i] for i in ids]
 

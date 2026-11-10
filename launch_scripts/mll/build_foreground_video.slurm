@@ -1,8 +1,9 @@
 #!/bin/bash
-# Resumable goal-suite conversion followed by an exhaustive pixel/data check.
+# Resumable suite conversion followed by an exhaustive pixel/data check.
 # Submit from the repository with:
 # sbatch --export=ALL,REPO_ROOT="$PWD" launch_scripts/mll/build_foreground_video.slurm
 # Select a node that can access SRC_ROOT, DST_ROOT, and the video frames.
+# Pass suites as script arguments, e.g. ...slurm libero_spatial libero_object.
 #SBATCH --job-name=libero-foreground-video
 #SBATCH --partition=allnodes
 #SBATCH --cpus-per-task=4
@@ -23,11 +24,27 @@ export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export TOKENIZERS_PARALLELISM=false
 
+if [[ $# -eq 0 ]]; then
+    set -- libero_goal
+fi
+for suite in "$@"; do
+    case "$suite" in
+        libero_goal|libero_spatial|libero_object|libero_10|libero_90) ;;
+        *) echo "Unknown suite: $suite" >&2; exit 1 ;;
+    esac
+    inputs=("$SRC_ROOT/$suite/"*.hdf5)
+    [[ -f "${inputs[0]}" ]] || { echo "No source files for $suite" >&2; exit 1; }
+done
+
+for suite in "$@"; do
+mkdir -p "$DST_ROOT/$suite"
+rm -f "$DST_ROOT/$suite/VALIDATED_COMPLETE.txt"
 "$REPO_ROOT/.venv/bin/python" -u scripts/build_libero_foreground_video.py \
     --src-root "$SRC_ROOT" --dst-root "$DST_ROOT" \
-    --frames-dir "$FRAMES_DIR" --suites libero_goal --keep-going
+    --frames-dir "$FRAMES_DIR" --suites "$suite" --keep-going
 
 "$REPO_ROOT/.venv/bin/python" -u scripts/validate_libero_foreground_video.py \
-    "$DST_ROOT"/libero_goal/*.hdf5
+    "$DST_ROOT/$suite/"*.hdf5
 
-date -u > "$DST_ROOT/VALIDATED_COMPLETE.txt"
+date -u > "$DST_ROOT/$suite/VALIDATED_COMPLETE.txt"
+done

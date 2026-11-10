@@ -1,5 +1,14 @@
 # LIBERO foreground video dataset
 
+## Checkpoint retention convention
+
+Max requested final-checkpoint-only retention for these comparison runs.
+Future foreground-video launches set `train.save_final_only=true`, skipping
+periodic `model_N.ckpt` files while retaining `model_final.ckpt` for evaluation.
+Metrics and configuration records are still saved. Existing artifacts are not
+deleted by this setting. This applies to the planned Spatial/Object expansion
+as well as future Goal comparison runs.
+
 Convert existing clean `libero_goal` demonstrations into 128x128 observations
 with moving EPIC-Kitchens video behind the robot, scene objects, and fixtures.
 This uses the `keep_foreground` definition from the four-panel previews: replace
@@ -34,6 +43,84 @@ The implementation is in `scripts/build_libero_foreground_video.py`,
 this document were untracked in Git; the data live outside the repository.
 
 ## Build
+
+### Spatial and Object expansion (2026-11-09)
+
+The build wrapper accepts suite names as positional arguments, retaining Goal
+as its default. Each suite writes its own `build_failures.json` and
+`VALIDATED_COMPLETE.txt` under the destination suite directory. The historical
+root-level Goal marker remains unchanged. A missing source suite fails before
+conversion; completion is marked only after conversion and exhaustive validation.
+
+Submitted Spatial as Slurm job **122358** and Object as **122359**. Each job
+requests one GPU, four CPUs, 16 GB RAM, and four hours, and converts all ten
+task files (500 demonstrations per suite), then validates the outputs. Submission
+commands, source/destination paths, and job IDs are recorded in
+`slurm_jobs/libero/dataset_build_20261109_142028/manifest.json`; stdout/stderr
+are saved alongside it. Submission is not evidence of completed validation;
+check job state and the per-suite completion marker.
+
+```bash
+sbatch --export=ALL,REPO_ROOT="$PWD" \
+    launch_scripts/mll/build_foreground_video.slurm libero_spatial
+sbatch --export=ALL,REPO_ROOT="$PWD" \
+    launch_scripts/mll/build_foreground_video.slurm libero_object
+```
+
+These jobs build data only. Spatial/Object rollout validation and training
+launcher generalization remain separate work; no policy training was submitted.
+
+### Spatial/Object training setup (2026-11-09)
+
+At Max's request, prepared and submitted **300 full training runs**: Spatial
+and Object, ten tasks per suite, seeds **0/1/2**, and five methods. Weights are
+BC 0, CARDPol 0.01, and VIP/CURL/VAE 0.001, carrying over the Goal-selected
+settings without a new weight sweep. Training retains ViLT, image/agentview
+only, joint BC/auxiliary encoder gradients, 50 epochs, batch 64, 90/10 demo
+split, auxiliary data pooled within the selected suite, offline W&B, and 100
+final-checkpoint foreground-video evaluation episodes (horizon 600).
+Only `model_final.ckpt` is retained. Logging groups include suite and method.
+
+Object build 122359 failed because its floor-workspace scenes have no table;
+the old helper incorrectly required table geometry. The shared mask helper now
+accepts floor-workspace scenes while still requiring floor/room geometry. It
+replaces floor/walls and any table and preserves all other geometry. Checked
+geometry names against all ten tasks of each Goal/Spatial/Object suite and
+inspected initial Spatial/Object previews. Object conversion was restarted as
+**122458**, resuming its partial files; initial demos are converting successfully.
+
+Submission directory: `slurm_jobs/libero/spatial_object_3seed_20261109/`.
+JSON/CSV manifests record each suite/method/task/seed/weight and array index;
+JSON includes exact configurations. All 300 Hydra configs passed composition
+and matched-setting checks; all generated shell scripts passed syntax checks,
+and task scripts were checked against the manifest.
+
+- **122461**: Spatial gate, dependent on successful build/validation job 122358.
+- **122462**: Object gate, dependent on successful replacement build/validation
+  job 122458.
+- **122463**: training array 0–299, dependent on success of both gate jobs,
+  with maximum concurrency **16 total** across the two suites.
+
+Each gate checks the suite's validation marker, ten complete files/500 demos,
+then exercises every task's live pixels, resets, and single/subprocess workers.
+It also runs two-step training/checkpoint-reload/short-rollout checks for all
+five methods, including verifying that no periodic checkpoint is written even
+with `save_freq=1`. Gates have not passed merely because they were submitted.
+Each training task independently checks the data and smoke completion markers.
+Full runs request one GPU, 16 CPUs, 128 GB RAM, and 24 hours each.
+
+Reusable setup is in `launch_scripts/mll/submit_foreground_comparison.py`:
+without `--submit` it prepares configurations, manifests, and scripts only;
+`--data-job SUITE=JOB_ID` supplies dataset-success dependencies. `--per-suite`
+selects a separate concurrency limit per suite instead of the default shared
+limit. Existing submitted directories are protected against repeat submission.
+
+Save audit (2026-11-10): reviewed the launcher, dataset/mask changes, environment
+validator, and final-checkpoint retention changes before committing. Python
+syntax checks passed for all six changed modules; the build wrapper passed
+`bash -n`, and `git diff --check` passed. The earlier 300-config preflight is
+recorded above; this save did not rerun GPU checks or submit additional jobs.
+Generated Slurm manifests/logs and dataset/model artifacts remain outside Git.
 
 From the repository root, using its existing Python environment:
 
@@ -579,3 +666,26 @@ Seed-level ten-task averages (seeds 0/1/2):
 Paired CARDPol minus BC improvement across matching seed-level averages: **3.77 ± 1.90 percentage points** (n=3 seed pairs). No significance test was performed.
 
 For the fully completed VIP weight-0.1 setting on pilot tasks 0 and 2, the corresponding two-task result is **39.83 ± 1.17%** (three seed-level two-task averages). This covers two tasks only and must not be compared directly with the ten-task aggregate. Other VIP weights were incomplete at the 18:08 audit.
+
+## Baseline expansion — 2026-11-08
+
+All 54 VIP/CURL/VAE pilot runs (120572) completed with exit code `0:0`.
+Weight 0.001 gives the highest two-task mean for each method: VIP 69.83%,
+CURL 65.33%, and VAE 74.67%, versus CARDPol weight 0.01 at 77.50% on
+the same tasks and seeds 0/1/2.
+
+At Max's request, expanded VIP, CURL, and VAE at weight **0.001** to all ten
+tasks and training seeds **0–4**: 150 total combinations. Reused the 18
+completed matching pilot runs (tasks 0/2, seeds 0/1/2), verifying final
+checkpoints and final evaluation metrics. Submitted the remaining **132 runs**
+as Slurm array **121156**, indices 0–131, concurrency **16**. Submission directory:
+`slurm_jobs/libero/array_20261108_015126/`. JSON/CSV manifests cover all 150
+combinations, including reused jobs and artifact paths; JSON preserves configs.
+
+All 150 Hydra configurations passed composition and setting checks before
+submission. Existing pilot configurations match the generated reused configs
+exactly. The 132 generated task scripts were checked against the manifest.
+Settings remain ViLT, agentview only, foreground-video data and evaluation,
+50 epochs, batch 64, 100 final evaluation episodes, offline W&B, VIP sampling
+for VIP and future-pair sampling for CURL/VAE; VAE uses `train.vae_type=vae`.
+Each run requests one GPU, 16 CPUs, 128 GB RAM, and 24 hours.

@@ -254,6 +254,10 @@ def main():
     parser.add_argument("--max-rgb-mae", type=float, default=5.0)
     parser.add_argument("--keep-going", action="store_true", help="Finish other tasks if a task fails; still exit nonzero")
     args = parser.parse_args()
+    if not args.files:
+        for suite in args.suites:
+            if not (args.src_root / suite).is_dir() or not list((args.src_root / suite).glob("*.hdf5")):
+                parser.error("No input datasets found for suite: %s" % suite)
     paths = args.files or [path for suite in args.suites for path in sorted((args.src_root / suite).glob("*.hdf5"))]
     if not paths:
         parser.error("No input datasets found")
@@ -261,6 +265,10 @@ def main():
     video = DistractorSource(args.frames_dir)
     print("Building %d task files using %d video frames" % (len(paths), video.num_frames), flush=True)
     failures = []
+    suites = set(path.parent.name for path in paths)
+    for suite in suites:
+        (args.dst_root / suite).mkdir(parents=True, exist_ok=True)
+        write_json(args.dst_root / suite / "build_failures.json", [])
     for path in paths:
         try:
             convert_file(path, args, video)
@@ -269,10 +277,10 @@ def main():
                 raise
             traceback.print_exc()
             failures.append(dict(source=str(path), error=str(exc)))
-            write_json(args.dst_root / "build_failures.json", failures)
+            write_json(args.dst_root / path.parent.name / "build_failures.json",
+                       [failure for failure in failures if Path(failure["source"]).parent.name == path.parent.name])
     if failures:
-        raise SystemExit("%d task(s) failed; see build_failures.json. Completed demos were retained." % len(failures))
-    write_json(args.dst_root / "build_failures.json", [])
+        raise SystemExit("%d task(s) failed; see each suite's build_failures.json. Completed demos were retained." % len(failures))
 
 
 if __name__ == "__main__":

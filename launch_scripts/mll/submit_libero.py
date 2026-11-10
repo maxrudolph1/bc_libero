@@ -125,7 +125,7 @@ def build_train_command(
 
 
 def configure_foreground_video(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Select the completed goal dataset and matched, final-checkpoint rollouts."""
+    """Select foreground-video data and matched, final-checkpoint rollouts."""
     config = copy.deepcopy(config)
     config.update({
         "data.root_dir": "/datastor2/mrudolph/LIBERO/datasets_foreground_video",
@@ -134,12 +134,14 @@ def configure_foreground_video(config: Dict[str, Any]) -> Dict[str, Any]:
         "eval.enable_rollout": "false",
         "eval.post_train_rollout.enable": "true",
         "eval.post_train_rollout.eval_all": "false",
+        "train.save_final_only": "true",
         "env.env_num": 10,
         "env.num_env_rollouts": 100,
         "env.horizon": 600,
         "+wandb.mode": "offline",
     })
     config["wandb.group"] += (
+        (f"_{config['data.env_name']}" if config['data.env_name'] != "libero_goal" else "") +
         f"_foreground_video_task{config['data.dual_task.focused_task_id']}"
         f"_rep{config['train.rep_loss_scale']:g}"
     )
@@ -929,7 +931,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--foreground-video", action="store_true",
-        help="Use foreground-video goal data and 100 final-checkpoint eval episodes (EGL).",
+        help="Use foreground-video Goal/Spatial/Object data and 100 final-checkpoint eval episodes (EGL).",
     )
     parser.add_argument(
         "--vae-baseline-sweep",
@@ -1156,8 +1158,8 @@ if __name__ == "__main__":
 
     cameras = parse_camera_set(cli.cameras) if cli.cameras else list(DEFAULT_CAMERAS)
     if cli.foreground_video:
-        if libero_envs != ["libero_goal"]:
-            parser.error("--foreground-video currently has data only for libero_goal")
+        if any(suite not in ("libero_goal", "libero_spatial", "libero_object") for suite in libero_envs):
+            parser.error("--foreground-video supports Goal, Spatial, and Object")
         if "agentview" not in cameras:
             parser.error("--foreground-video requires the agentview camera")
     if (True in distract_values or rep_baseline_sweep) and "agentview" not in cameras:
